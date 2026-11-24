@@ -1,6 +1,10 @@
 # NETRA
 **Cross-Platform Portable Network Intelligence & Packet Analysis Platform**
 
+> [!WARNING]
+> ### 🚧 UNDER ACTIVE DEVELOPMENT
+> NETRA is currently in active development (v0.1.0 Initial Development). Core architectures, protocol dissectors, and desktop interfaces are undergoing rapid enhancement.
+
 NETRA is an independent, lightweight, high-performance network intelligence platform implemented in Rust. Inspired by Wireshark and Nmap, NETRA provides offline packet inspection, PCAP/PCAPNG analysis, subnet discovery, port scanning, and unified network inventory correlation—optimized for bounded memory and offline execution.
 
 ---
