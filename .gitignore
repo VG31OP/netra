@@ -1,0 +1,22 @@
+# Target directory and build artifacts
+/target
+Cargo.lock
+
+# Operating system metadata
+Thumbs.db
+.DS_Store
+*.swp
+*.bak
+
+# NETRA runtime and portable data directories
+/data
+/logs
+/captures
+/exports
+portable.flag
+
+# IDE configurations
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace

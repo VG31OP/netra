@@ -1,0 +1,16 @@
+[package]
+name = "netra-capture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+netra-common = { path = "../netra-common" }
+netra-parser = { path = "../netra-parser" }
+pcap-file.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+crossbeam-channel.workspace = true
+chrono.workspace = true

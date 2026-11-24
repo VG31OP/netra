@@ -1,0 +1,17 @@
+[package]
+name = "netra-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+netra-common = { path = "../netra-common" }
+netra-config = { path = "../netra-config" }
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true

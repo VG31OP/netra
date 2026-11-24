@@ -1,0 +1,25 @@
+[package]
+name = "netra-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+netra-common = { path = "../netra-common" }
+netra-config = { path = "../netra-config" }
+netra-storage = { path = "../netra-storage" }
+netra-parser = { path = "../netra-parser" }
+netra-protocols = { path = "../netra-protocols" }
+netra-filter = { path = "../netra-filter" }
+netra-capture = { path = "../netra-capture" }
+netra-scanner = { path = "../netra-scanner" }
+netra-discovery = { path = "../netra-discovery" }
+netra-intelligence = { path = "../netra-intelligence" }
+netra-export = { path = "../netra-export" }
+
+serde.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
