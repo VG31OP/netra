@@ -14,7 +14,11 @@ netra-common = { path = "../../crates/netra-common" }
 netra-config = { path = "../../crates/netra-config" }
 netra-storage = { path = "../../crates/netra-storage" }
 netra-core = { path = "../../crates/netra-core" }
+slint = "1.19.1"
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
+
+[build-dependencies]
+slint-build = "1.19.1"

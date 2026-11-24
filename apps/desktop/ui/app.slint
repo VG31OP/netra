@@ -1,0 +1,328 @@
+import { Button, VerticalBox, HorizontalBox, LineEdit, ScrollView, ListView } from "std-widgets.slint";
+
+export struct PacketItem {
+    index: int,
+    protocol: string,
+    source: string,
+    destination: string,
+    length: int,
+    summary: string,
+}
+
+export struct HostItem {
+    ip: string,
+    mac: string,
+    status: string,
+    services: string,
+    packets: int,
+}
+
+export component MainWindow inherits Window {
+    title: "NETRA - Network Intelligence Platform";
+    preferred-width: 1080px;
+    preferred-height: 720px;
+    background: #0d1117;
+    default-font-family: "Segoe UI, sans-serif";
+
+    in-out property <string> active-nav: "overview";
+    in-out property <string> storage-mode: "Portable Mode";
+    in-out property <string> status-message: "Engine Ready";
+    in-out property <int> known-hosts-count: 0;
+    in-out property <int> total-packets-count: 0;
+
+    in-out property <[PacketItem]> packet-list: [];
+    in-out property <[HostItem]> host-list: [];
+
+    callback nav-changed(string);
+    callback run-discovery();
+    callback run-scan();
+    callback load-capture-file();
+
+    VerticalBox {
+        padding: 0px;
+        spacing: 0px;
+
+        // Header / Top Navigation Bar
+        Rectangle {
+            height: 56px;
+            background: #161b22;
+            HorizontalBox {
+                padding-left: 20px;
+                padding-right: 20px;
+                alignment: space-between;
+
+                HorizontalBox {
+                    spacing: 12px;
+                    Text {
+                        text: "NETRA";
+                        font-size: 20px;
+                        font-weight: 700;
+                        color: #58a6ff;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: "|  Network Intelligence & Packet Engine";
+                        font-size: 13px;
+                        color: #8b949e;
+                        vertical-alignment: center;
+                    }
+                }
+
+                HorizontalBox {
+                    spacing: 16px;
+                    Rectangle {
+                        background: #21262d;
+                        border-radius: 4px;
+                        height: 28px;
+                        HorizontalBox {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            Text {
+                                text: root.storage-mode;
+                                color: #3fb950;
+                                font-size: 12px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Main Layout (Sidebar + Content Area)
+        HorizontalBox {
+            padding: 0px;
+            spacing: 0px;
+
+            // Sidebar
+            Rectangle {
+                width: 220px;
+                background: #0d1117;
+                border-width: 1px;
+                border-color: #30363d;
+
+                VerticalBox {
+                    padding: 12px;
+                    spacing: 6px;
+                    alignment: start;
+
+                    Button {
+                        text: "  Overview";
+                        clicked => { root.active-nav = "overview"; root.nav-changed("overview"); }
+                    }
+                    Button {
+                        text: "  Network Discovery";
+                        clicked => { root.active-nav = "discovery"; root.nav-changed("discovery"); }
+                    }
+                    Button {
+                        text: "  Packet Analyzer";
+                        clicked => { root.active-nav = "packets"; root.nav-changed("packets"); }
+                    }
+                    Button {
+                        text: "  Network Inventory";
+                        clicked => { root.active-nav = "inventory"; root.nav-changed("inventory"); }
+                    }
+                    Button {
+                        text: "  Live Capture";
+                        clicked => { root.active-nav = "capture"; root.nav-changed("capture"); }
+                    }
+                    Button {
+                        text: "  Settings & Privacy";
+                        clicked => { root.active-nav = "settings"; root.nav-changed("settings"); }
+                    }
+                }
+            }
+
+            // Content Body Area
+            Rectangle {
+                background: #090d13;
+                VerticalBox {
+                    padding: 24px;
+                    spacing: 16px;
+
+                    // OVERVIEW VIEW
+                    if root.active-nav == "overview": VerticalBox {
+                        spacing: 16px;
+                        Text {
+                            text: "System & Network Operations Overview";
+                            font-size: 18px;
+                            font-weight: 700;
+                            color: #f0f6fc;
+                        }
+
+                        HorizontalBox {
+                            spacing: 16px;
+                            Rectangle {
+                                background: #161b22;
+                                border-radius: 6px;
+                                border-color: #30363d;
+                                border-width: 1px;
+                                height: 90px;
+                                VerticalBox {
+                                    padding: 12px;
+                                    Text { text: "KNOWN HOSTS"; font-size: 11px; color: #8b949e; font-weight: 600; }
+                                    Text { text: root.known-hosts-count; font-size: 24px; font-weight: 700; color: #58a6ff; }
+                                }
+                            }
+                            Rectangle {
+                                background: #161b22;
+                                border-radius: 6px;
+                                border-color: #30363d;
+                                border-width: 1px;
+                                height: 90px;
+                                VerticalBox {
+                                    padding: 12px;
+                                    Text { text: "ANALYZED PACKETS"; font-size: 11px; color: #8b949e; font-weight: 600; }
+                                    Text { text: root.total-packets-count; font-size: 24px; font-weight: 700; color: #3fb950; }
+                                }
+                            }
+                            Rectangle {
+                                background: #161b22;
+                                border-radius: 6px;
+                                border-color: #30363d;
+                                border-width: 1px;
+                                height: 90px;
+                                VerticalBox {
+                                    padding: 12px;
+                                    Text { text: "STORAGE SUBSYYSTEM"; font-size: 11px; color: #8b949e; font-weight: 600; }
+                                    Text { text: "SQLite WAL"; font-size: 20px; font-weight: 700; color: #d2a8ff; }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            background: #161b22;
+                            border-radius: 6px;
+                            border-color: #30363d;
+                            border-width: 1px;
+                            VerticalBox {
+                                padding: 16px;
+                                spacing: 8px;
+                                Text { text: "Core Product Verification"; font-size: 14px; font-weight: 600; color: #f0f6fc; }
+                                Text { text: "- Fully offline operation. Zero telemetry or external vendor pings."; font-size: 12px; color: #c9d1d9; }
+                                Text { text: "- Bounded memory streaming reader: large PCAP/PCAPNG files process incrementally."; font-size: 12px; color: #c9d1d9; }
+                                Text { text: "- Cross-platform shared Rust core powers both CLI and Desktop UI."; font-size: 12px; color: #c9d1d9; }
+                            }
+                        }
+                    }
+
+                    // PACKET ANALYZER VIEW
+                    if root.active-nav == "packets": VerticalBox {
+                        spacing: 12px;
+                        HorizontalBox {
+                            alignment: space-between;
+                            Text {
+                                text: "Packet Inspection & Protocol Analyzer";
+                                font-size: 18px;
+                                font-weight: 700;
+                                color: #f0f6fc;
+                            }
+                            Button {
+                                text: "Open PCAP File";
+                                clicked => { root.load-capture-file(); }
+                            }
+                        }
+
+                        Rectangle {
+                            background: #161b22;
+                            border-radius: 4px;
+                            border-color: #30363d;
+                            border-width: 1px;
+                            height: 480px;
+
+                            VerticalBox {
+                                padding: 12px;
+                                Text {
+                                    text: "Index | Protocol | Source | Destination | Length | Summary";
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    color: #8b949e;
+                                }
+                                Rectangle { height: 1px; background: #30363d; }
+                                ListView {
+                                    for item in root.packet-list: HorizontalBox {
+                                        padding: 4px;
+                                        Text { text: item.index; width: 50px; color: #8b949e; }
+                                        Text { text: item.protocol; width: 80px; color: #58a6ff; font-weight: 600; }
+                                        Text { text: item.source; width: 140px; color: #f0f6fc; }
+                                        Text { text: item.destination; width: 140px; color: #f0f6fc; }
+                                        Text { text: item.length; width: 60px; color: #8b949e; }
+                                        Text { text: item.summary; color: #c9d1d9; }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // DISCOVERY VIEW
+                    if root.active-nav == "discovery": VerticalBox {
+                        spacing: 12px;
+                        Text {
+                            text: "Subnet Discovery & Host Inventory";
+                            font-size: 18px;
+                            font-weight: 700;
+                            color: #f0f6fc;
+                        }
+                        HorizontalBox {
+                            spacing: 10px;
+                            LineEdit {
+                                text: "192.168.1.0/24";
+                                placeholder-text: "Subnet CIDR (e.g. 192.168.1.0/24)";
+                            }
+                            Button {
+                                text: "Run Discovery";
+                                clicked => { root.run-discovery(); }
+                            }
+                        }
+                    }
+
+                    // SETTINGS VIEW
+                    if root.active-nav == "settings": VerticalBox {
+                        spacing: 12px;
+                        Text { text: "Settings & System Information"; font-size: 18px; font-weight: 700; color: #f0f6fc; }
+                        Rectangle {
+                            background: #161b22;
+                            border-radius: 6px;
+                            border-color: #30363d;
+                            border-width: 1px;
+                            VerticalBox {
+                                padding: 16px;
+                                spacing: 8px;
+                                Text { text: "Application Version: NETRA v0.1.0 (Rust)"; color: #f0f6fc; }
+                                Text { text: "License: Apache License 2.0"; color: #8b949e; }
+                                Text { text: "Telemetry: Completely Disabled (Zero Telemetry)"; color: #3fb950; font-weight: 600; }
+                                Text { text: "Update Checks: Disabled by Default"; color: #8b949e; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Status Bar
+        Rectangle {
+            height: 28px;
+            background: #161b22;
+            border-width: 1px;
+            border-color: #30363d;
+            HorizontalBox {
+                padding-left: 16px;
+                padding-right: 16px;
+                alignment: space-between;
+                Text {
+                    text: root.status-message;
+                    font-size: 12px;
+                    color: #8b949e;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: "NETRA Core 0.1.0";
+                    font-size: 11px;
+                    color: #8b949e;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
