@@ -4,11 +4,12 @@ use clap::{Parser, Subcommand};
 use netra_core::NetraCore;
 use netra_discovery::SubnetScanner;
 use netra_export::Exporter;
-use netra_scanner::PortScanner;
+use netra_parser::{CaptureFileReader, HexDumpViewer, PacketParser};
+use netra_scanner::{PortPresets, PortScanner, TimingTemplate};
 
 #[derive(Parser)]
 #[command(name = "netra")]
-#[command(about = "NETRA - Portable Network Intelligence & Analysis Engine", long_about = None)]
+#[command(about = "NETRA - Unified Network Intelligence, Packet Dissection & Scanning Platform", long_about = None)]
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
@@ -31,17 +32,19 @@ enum Commands {
         concurrency: usize,
     },
 
-    /// Scan target host for open ports and services
+    /// Scan target host for open ports and services (Nmap-style)
     Scan {
         #[arg(short, long)]
         target: IpAddr,
-        #[arg(short, long, default_value = "21,22,23,25,53,80,110,139,143,443,445,3306,3389,5432,6379,8080,8443")]
+        #[arg(short, long, default_value = "top-100")]
         ports: String,
-        #[arg(long, default_value_t = 100)]
-        concurrency: usize,
+        #[arg(short = 'T', long, default_value_t = 3)]
+        timing: u8,
+        #[arg(long)]
+        service_version: bool,
     },
 
-    /// Perform offline packet analysis on PCAP or PCAPNG captures
+    /// Perform offline packet analysis on PCAP or PCAPNG captures (Wireshark-style)
     Analyze {
         #[arg(short, long)]
         file: PathBuf,
@@ -49,6 +52,20 @@ enum Commands {
         filter: Option<String>,
         #[arg(long, default_value_t = 50)]
         limit: usize,
+    },
+
+    /// Display formatted Hex & ASCII dump of a packet in a capture file
+    Hexdump {
+        #[arg(short, long)]
+        file: PathBuf,
+        #[arg(short, long, default_value_t = 1)]
+        index: u64,
+    },
+
+    /// Display Wireshark-style protocol statistics and conversation endpoints
+    PcapStats {
+        #[arg(short, long)]
+        file: PathBuf,
     },
 
     /// Export discovered host inventory to JSON or CSV
@@ -90,6 +107,7 @@ async fn main() -> anyhow::Result<()> {
             println!("==================================================");
             println!("NETRA Network Intelligence Platform v{}", env!("CARGO_PKG_VERSION"));
             println!("Architecture: Modular Cross-Platform Rust Core");
+            println!("Engines: Wireshark-class Packet Dissection + Nmap-class Scanner");
             println!("Privacy: Fully Offline, Zero Telemetry");
             println!("--------------------------------------------------");
             println!("Portable Mode: {}", if core.paths.is_portable { "ACTIVE (portable.flag detected)" } else { "INACTIVE (system directories)" });
@@ -104,8 +122,7 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Interfaces => {
             println!("[*] Enumerating network adapters...");
-            println!("Interface enumeration requires capture adapter initialization.");
-            println!("Default loopback and host socket communication are ready.");
+            println!("Capture abstraction ready. Raw socket & libpcap interfaces supported.");
         }
 
         Commands::Discover { subnet, concurrency } => {
@@ -137,58 +154,109 @@ async fn main() -> anyhow::Result<()> {
             println!("[+] Discovery sweep completed.");
         }
 
-        Commands::Scan { target, ports, concurrency } => {
-            let port_list: Vec<u16> = ports
-                .split(',')
-                .filter_map(|p| p.trim().parse::<u16>().ok())
-                .collect();
+        Commands::Scan { target, ports, timing, service_version: _ } => {
+            let port_list = if ports == "top-100" || ports == "-F" {
+                PortPresets::TOP_100.to_vec()
+            } else {
+                match PortPresets::parse_port_expression(&ports) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("[-] Error parsing port expression: {}", e);
+                        return Ok(());
+                    }
+                }
+            };
 
-            println!("[*] Scanning {} ({} ports) with concurrency {}...", target, port_list.len(), concurrency);
-            println!("PORT     STATE    SERVICE    BANNER");
-            println!("---------------------------------------------");
-
-            let scanner = PortScanner::new(core.config.scanner.default_timeout_ms, concurrency);
+            let template = TimingTemplate::from_level(timing);
+            let scanner = PortScanner::with_timing(template);
             let core_intel = core.intelligence.clone();
+
+            println!("[*] Starting NETRA scan against {} ({} ports) [Timing: T{}]", target, port_list.len(), timing);
+            println!("PORT     STATE    SERVICE       BANNER");
+            println!("---------------------------------------------------------");
 
             scanner.scan_ports(target, port_list, move |rec| {
                 if rec.state == netra_common::PortState::Open {
                     let svc = rec.service_name.as_deref().unwrap_or("unknown");
                     let banner = rec.banner.as_deref().unwrap_or("");
-                    println!("{:<8} {:<8} {:<10} {}", rec.port, rec.state, svc, banner);
+                    println!("{:<8} {:<8} {:<13} {}", rec.port, rec.state, svc, banner);
                     let _ = core_intel.record_service(target, rec);
                 }
             }).await;
 
-            println!("---------------------------------------------");
-            println!("[+] Scan completed.");
+            println!("---------------------------------------------------------");
+            println!("[+] Scan completed. Results correlated into SQLite inventory.");
         }
 
         Commands::Analyze { file, filter, limit } => {
             println!("[*] Analyzing capture file: {}", file.display());
             if let Some(ref f) = filter {
-                println!("[*] Applying filter expression: {}", f);
+                println!("[*] Display filter applied: \"{}\"", f);
             }
-            println!("--------------------------------------------------------------------------------");
-            println!("{:<6} {:<12} {:<21} {:<21} {:<6} {}", "INDEX", "PROTOCOL", "SOURCE", "DESTINATION", "LEN", "SUMMARY");
-            println!("--------------------------------------------------------------------------------");
+            println!("--------------------------------------------------------------------------------------------------");
+            println!("{:<6} {:<10} {:<21} {:<21} {:<6} {}", "INDEX", "PROTOCOL", "SOURCE", "DESTINATION", "LEN", "INFO");
+            println!("--------------------------------------------------------------------------------------------------");
 
             let mut count = 0;
             let result = core.analyze_file(&file, filter.as_deref(), |pkt| {
                 count += 1;
                 let src = pkt.source_ip.map(|i| i.to_string()).unwrap_or_else(|| "-".to_string());
                 let dst = pkt.destination_ip.map(|i| i.to_string()).unwrap_or_else(|| "-".to_string());
-                println!("{:<6} {:<12} {:<21} {:<21} {:<6} {}", pkt.index, pkt.protocol, src, dst, pkt.length, pkt.summary);
+                println!("{:<6} {:<10} {:<21} {:<21} {:<6} {}", pkt.index, pkt.protocol, src, dst, pkt.length, pkt.summary);
                 count < limit
             });
 
             match result {
                 Ok(total) => {
-                    println!("--------------------------------------------------------------------------------");
-                    println!("[+] Parsed {} packets (displayed {}).", total, count.min(limit));
+                    println!("--------------------------------------------------------------------------------------------------");
+                    println!("[+] Analyzed {} total packets (displayed {}).", total, count.min(limit));
                 }
                 Err(e) => {
                     eprintln!("[-] Error analyzing file: {}", e);
                 }
+            }
+        }
+
+        Commands::Hexdump { file, index } => {
+            println!("[*] Inspecting raw packet #{} from {}", index, file.display());
+            match CaptureFileReader::read_packet_raw(&file, index) {
+                Ok(Some(raw)) => {
+                    println!("Frame #{} ({} bytes raw payload):", index, raw.len());
+                    println!("-----------------------------------------------------------------");
+                    print!("{}", HexDumpViewer::format(&raw));
+                    println!("-----------------------------------------------------------------");
+
+                    // Dissect into protocol tree
+                    let tree = PacketParser::dissect_tree(&raw, index, chrono::Utc::now());
+                    println!("Dissected Protocol Tree:");
+                    for layer in tree.layers {
+                        println!(" ▸ {}", layer.name);
+                        for (k, v) in layer.fields {
+                            println!("    • {}: {}", k, v);
+                        }
+                    }
+                }
+                Ok(None) => eprintln!("[-] Packet #{} not found in capture file.", index),
+                Err(e) => eprintln!("[-] Error reading packet: {}", e),
+            }
+        }
+
+        Commands::PcapStats { file } => {
+            println!("[*] Generating Wireshark-style traffic statistics for {}", file.display());
+            let _ = core.analyze_file(&file, None, |_| true);
+
+            println!("\n=== PROTOCOL HIERARCHY STATISTICS ===");
+            for (proto, count) in core.intelligence.protocol_stats() {
+                println!("  {:<12} : {} packets", proto, count);
+            }
+
+            println!("\n=== IP CONVERSATION ENDPOINTS ===");
+            println!("{:<20} <-> {:<20} | {:<12} | {:<12}", "Address A", "Address B", "Packets", "Total Bytes");
+            println!("--------------------------------------------------------------------------------");
+            for (key, stats) in core.intelligence.conversations() {
+                let total_packets = stats.packets_a_to_b + stats.packets_b_to_a;
+                let total_bytes = stats.bytes_a_to_b + stats.bytes_b_to_a;
+                println!("{:<20} <-> {:<20} | {:<12} | {:<12}", key.ip_a, key.ip_b, total_packets, total_bytes);
             }
         }
 
@@ -216,7 +284,7 @@ async fn main() -> anyhow::Result<()> {
             println!("Stored Hosts:   {}", hosts.len());
         }
 
-        Commands::Benchmark { file } => {
+        Commands::Benchmark { file: _ } => {
             println!("[*] Running NETRA packet parsing throughput benchmark...");
             let packet_data = vec![
                 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0x08, 0x00,

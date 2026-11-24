@@ -63,7 +63,7 @@ impl std::str::FromStr for MacAddress {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NetworkProtocol {
     Ethernet,
     Arp,
@@ -75,6 +75,8 @@ pub enum NetworkProtocol {
     Dns,
     Http,
     Tls,
+    Dhcp,
+    Ssdp,
     Unknown(String),
 }
 
@@ -91,9 +93,20 @@ impl fmt::Display for NetworkProtocol {
             Self::Dns => write!(f, "DNS"),
             Self::Http => write!(f, "HTTP"),
             Self::Tls => write!(f, "TLS"),
+            Self::Dhcp => write!(f, "DHCP"),
+            Self::Ssdp => write!(f, "SSDP"),
             Self::Unknown(name) => write!(f, "{}", name),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PacketFlags {
+    pub syn: bool,
+    pub ack: bool,
+    pub fin: bool,
+    pub rst: bool,
+    pub psh: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +122,11 @@ pub struct PacketMetadata {
     pub protocol: NetworkProtocol,
     pub length: u32,
     pub summary: String,
+    pub flags: Option<PacketFlags>,
+    pub sni: Option<String>,
+    pub dns_name: Option<String>,
+    pub http_method: Option<String>,
+    pub http_status: Option<u16>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
