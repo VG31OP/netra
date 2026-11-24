@@ -1,8 +1,9 @@
-use netra_common::{PacketMetadata, Result};
+use netra_common::{ExpertInfo, PacketMetadata, Result, SecurityVulnerability, TracerouteHop};
 use netra_config::{AppConfig, RuntimePaths};
 use netra_filter::FilterExpr;
 use netra_intelligence::IntelligenceEngine;
-use netra_parser::CaptureFileReader;
+use netra_parser::{CaptureFileReader, ExpertEngine};
+use netra_scanner::{NseEngine, TracerouteEngine};
 use netra_storage::StorageEngine;
 
 pub struct NetraCore {
@@ -44,5 +45,33 @@ impl NetraCore {
                 true
             }
         })
+    }
+
+    pub fn expert_info_for_file<P: AsRef<std::path::Path>>(&self, path: P) -> Result<Vec<ExpertInfo>> {
+        let mut engine = ExpertEngine::new();
+        let mut results = Vec::new();
+
+        CaptureFileReader::read_packets_streaming(path, |index, raw| {
+            if let Ok(meta) = netra_parser::PacketParser::parse_raw(raw, index, chrono::Utc::now()) {
+                let alerts = engine.analyze(&meta, raw);
+                results.extend(alerts);
+            }
+            true
+        })?;
+
+        Ok(results)
+    }
+
+    pub async fn traceroute<F>(&self, target: std::net::IpAddr, on_hop: F) -> Vec<TracerouteHop>
+    where
+        F: FnMut(TracerouteHop),
+    {
+        let engine = TracerouteEngine::default();
+        engine.trace(target, on_hop).await
+    }
+
+    pub async fn audit_target(&self, target: std::net::IpAddr, open_ports: &[u16]) -> Vec<SecurityVulnerability> {
+        let engine = NseEngine::default();
+        engine.audit_target(target, open_ports).await
     }
 }

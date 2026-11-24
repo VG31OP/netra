@@ -3,11 +3,14 @@ use netra_common::{NetraError, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppConfig {
     pub general: GeneralConfig,
     pub storage: StorageConfig,
     pub capture: CaptureConfig,
+    pub dissection: DissectionConfig,
     pub scanner: ScannerConfig,
+    pub security_audit: SecurityAuditConfig,
     pub logging: LoggingConfig,
 }
 
@@ -17,17 +20,21 @@ impl Default for AppConfig {
             general: GeneralConfig::default(),
             storage: StorageConfig::default(),
             capture: CaptureConfig::default(),
+            dissection: DissectionConfig::default(),
             scanner: ScannerConfig::default(),
+            security_audit: SecurityAuditConfig::default(),
             logging: LoggingConfig::default(),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct GeneralConfig {
     pub offline_mode: bool,
     pub check_updates: bool,
     pub theme: String,
+    pub time_display_format: String,
 }
 
 impl Default for GeneralConfig {
@@ -36,11 +43,13 @@ impl Default for GeneralConfig {
             offline_mode: true,
             check_updates: false,
             theme: "dark".to_string(),
+            time_display_format: "relative".to_string(),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct StorageConfig {
     pub portable_mode: bool,
     pub max_db_size_mb: u64,
@@ -58,11 +67,14 @@ impl Default for StorageConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CaptureConfig {
     pub buffer_size_kb: usize,
     pub snaplen: u32,
     pub promiscuous: bool,
     pub default_filter: String,
+    pub ring_buffer_count: usize,
+    pub auto_stop_packets: Option<u64>,
 }
 
 impl Default for CaptureConfig {
@@ -72,16 +84,48 @@ impl Default for CaptureConfig {
             snaplen: 65535,
             promiscuous: false,
             default_filter: String::new(),
+            ring_buffer_count: 5,
+            auto_stop_packets: None,
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DissectionConfig {
+    pub relative_seq_numbers: bool,
+    pub checksum_verification: bool,
+    pub reassemble_tcp: bool,
+    pub desegment_ssl: bool,
+    pub resolve_mac_oui: bool,
+}
+
+impl Default for DissectionConfig {
+    fn default() -> Self {
+        Self {
+            relative_seq_numbers: true,
+            checksum_verification: true,
+            reassemble_tcp: true,
+            desegment_ssl: true,
+            resolve_mac_oui: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ScannerConfig {
     pub default_timeout_ms: u64,
     pub default_concurrency: usize,
     pub max_rate_limit_pps: u32,
     pub resolve_dns: bool,
+    pub default_timing: u8,
+    pub min_rtt_ms: u64,
+    pub max_rtt_ms: u64,
+    pub max_retries: u32,
+    pub scan_delay_ms: u64,
+    pub data_length: usize,
+    pub scan_type: String,
 }
 
 impl Default for ScannerConfig {
@@ -91,11 +135,45 @@ impl Default for ScannerConfig {
             default_concurrency: 100,
             max_rate_limit_pps: 500,
             resolve_dns: false,
+            default_timing: 3,
+            min_rtt_ms: 50,
+            max_rtt_ms: 2000,
+            max_retries: 2,
+            scan_delay_ms: 0,
+            data_length: 0,
+            scan_type: "connect".to_string(),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SecurityAuditConfig {
+    pub enabled: bool,
+    pub check_ciphers: bool,
+    pub check_anon_ftp: bool,
+    pub check_smb_signing: bool,
+    pub check_http_headers: bool,
+    pub check_common_endpoints: bool,
+    pub custom_user_agent: String,
+}
+
+impl Default for SecurityAuditConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            check_ciphers: true,
+            check_anon_ftp: true,
+            check_smb_signing: true,
+            check_http_headers: true,
+            check_common_endpoints: true,
+            custom_user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NETRA-Auditor/1.0".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LoggingConfig {
     pub level: String,
     pub log_to_file: bool,
@@ -186,5 +264,28 @@ impl RuntimePaths {
             std::fs::write(&self.config_file, serialized)?;
             Ok(conf)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_partial_toml_backward_compatibility() {
+        let partial_toml = r#"
+            [general]
+            offline_mode = true
+
+            [storage]
+            portable_mode = true
+        "#;
+        let config: AppConfig = toml::from_str(partial_toml).expect("Should deserialize partial config");
+        assert!(config.general.offline_mode);
+        assert_eq!(config.general.theme, "dark");
+        assert_eq!(config.general.time_display_format, "relative");
+        assert!(config.dissection.checksum_verification);
+        assert_eq!(config.scanner.default_timing, 3);
+        assert!(config.security_audit.enabled);
     }
 }

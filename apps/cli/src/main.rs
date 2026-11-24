@@ -100,6 +100,28 @@ enum Commands {
     /// Display storage location, database status, and size
     Storage,
 
+    /// Hop-by-hop network path traceroute (Nmap-style traceroute)
+    Traceroute {
+        #[arg(short, long)]
+        target: String,
+        #[arg(long, default_value_t = 30)]
+        max_hops: u8,
+    },
+
+    /// Launch NETRA Scripting Engine (NSE) vulnerability & security audit
+    Audit {
+        #[arg(short, long)]
+        target: String,
+        #[arg(short, long, default_value = "21,80,443,445,6379,8080")]
+        ports: String,
+    },
+
+    /// Display Wireshark Expert Information protocol health and anomaly alerts
+    Expert {
+        #[arg(short, long)]
+        file: PathBuf,
+    },
+
     /// Execute parsing and analysis benchmarks
     Benchmark {
         #[arg(short, long)]
@@ -406,6 +428,80 @@ async fn main() -> anyhow::Result<()> {
             println!("Database Size:  {} bytes ({:.2} KB)", size, size as f64 / 1024.0);
             let hosts = core.intelligence.all_hosts();
             println!("Stored Hosts:   {}", hosts.len());
+        }
+
+        Commands::Traceroute { target, max_hops } => {
+            println!("[*] Initiating NETRA Traceroute to {} (max {} hops)...", target, max_hops);
+            let target_ips = match SubnetScanner::parse_targets(&target) {
+                Ok(ips) if !ips.is_empty() => ips,
+                _ => {
+                    eprintln!("[-] Error: Invalid target IP or hostname: {}", target);
+                    return Ok(());
+                }
+            };
+
+            let target_ip = target_ips[0];
+            let engine = netra_scanner::TracerouteEngine::new(max_hops, 80);
+            println!("HOP  RTT         ADDRESS / STATUS");
+            println!("--------------------------------------------------");
+            let hops = engine.trace(target_ip, |hop| {
+                let rtt_str = hop.rtt_ms.map(|ms| format!("{:.2} ms", ms)).unwrap_or_else(|| "*".to_string());
+                let ip_str = hop.ip.map(|i| i.to_string()).unwrap_or_else(|| "* * *".to_string());
+                println!("{:02}   {:10}  {} ({})", hop.hop, rtt_str, ip_str, hop.status);
+            }).await;
+            println!("--------------------------------------------------");
+            println!("[+] Traceroute finished: {} hops recorded.", hops.len());
+        }
+
+        Commands::Audit { target, ports } => {
+            println!("[*] Launching NETRA Scripting Engine (NSE) Vulnerability Audit for {}...", target);
+            let target_ips = match SubnetScanner::parse_targets(&target) {
+                Ok(ips) if !ips.is_empty() => ips,
+                _ => {
+                    eprintln!("[-] Error: Invalid target: {}", target);
+                    return Ok(());
+                }
+            };
+            let target_ip = target_ips[0];
+            let port_list = PortPresets::parse_port_expression(&ports).unwrap_or_else(|_| vec![21, 80, 443, 445, 6379, 8080]);
+            let engine = netra_scanner::NseEngine::default();
+            let vulns = engine.audit_target(target_ip, &port_list).await;
+
+            println!("--------------------------------------------------");
+            println!("SEVERITY  PORT   ID                       TITLE");
+            println!("--------------------------------------------------");
+            if vulns.is_empty() {
+                println!("[+] No high/critical security vulnerabilities detected across audited ports.");
+            } else {
+                for v in &vulns {
+                    let port_str = v.port.map(|p| p.to_string()).unwrap_or_else(|| "-".to_string());
+                    println!("{:<8}  {:<5}  {:<23}  {}", v.severity, port_str, v.id, v.title);
+                    println!("          Details:     {}", v.description);
+                    println!("          Remediation: {}", v.remediation);
+                    println!();
+                }
+            }
+            println!("--------------------------------------------------");
+            println!("[+] Audit completed: {} findings.", vulns.len());
+        }
+
+        Commands::Expert { file } => {
+            println!("[*] Analyzing Wireshark Expert Information for: {}", file.display());
+            let alerts = match core.expert_info_for_file(&file) {
+                Ok(a) => a,
+                Err(e) => {
+                    eprintln!("[-] Error analyzing capture file: {}", e);
+                    return Ok(());
+                }
+            };
+
+            println!("PKT #  SEVERITY  GROUP           PROTOCOL  MESSAGE");
+            println!("--------------------------------------------------------------------------------");
+            for a in &alerts {
+                println!("{:05}  {:<8}  {:<14}  {:<8}  {}", a.packet_index, a.severity, a.group, a.protocol, a.message);
+            }
+            println!("--------------------------------------------------------------------------------");
+            println!("[+] Expert Info Summary: {} total events / anomalies flagged.", alerts.len());
         }
 
         Commands::Benchmark { file: _ } => {

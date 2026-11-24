@@ -47,9 +47,15 @@ NETRA is an independent, lightweight, high-performance network intelligence plat
 - **Streaming PCAP & PCAPNG Readers**: Incremental block processing supporting standard PCAP and modern PCAPNG formats.
 - **Deep Protocol Dissectors**:
   - *Layer 2*: Ethernet II, ARP / RARP
-  - *Layer 3*: IPv4, IPv6, ICMPv4, ICMPv6
+  - *Layer 2*: Ethernet II, ARP / RARP, IEEE 802.1Q VLAN Tagging
+  - *Layer 3*: IPv4, IPv6, ICMPv4 (Echo, Unreachable, TTL Exceeded), ICMPv6
   - *Layer 4*: TCP (sequence, acknowledgment, window size, flags), UDP
-  - *Layer 7*: HTTP/1.1, TLS / SSL (ClientHello SNI), DNS, mDNS, DHCP / BOOTP, SSDP, SMBv1/v2/v3, NTP, SSH banner extraction
+  - *Layer 7*: HTTP/1.1 (Request/Response headers, status codes), TLS / SSL (ClientHello SNI), DNS (Queries & RR Answers: A, AAAA, CNAME, PTR, MX, TXT), mDNS, DHCP / BOOTP, SSDP, SMBv1/v2/v3, NTP, SSH banner extraction
+- **Wireshark Expert Information Engine**:
+  - Automatically identifies protocol health issues across 4 severity tiers: *Error*, *Warning*, *Note*, and *Chat*.
+  - Detects TCP Zero Window flow control stalls, connection resets (RST), HTTP 4xx/5xx client/server errors, and DNS NXDomain / SERVFAIL anomalies.
+- **Wireshark Packet Coloring Rules**:
+  - Live color-coding for packet list (Bad TCP in Red, HTTP in Green, TLS in Purple, DNS in Blue, ICMP in Pink, ARP in Yellow).
 - **Wireshark Display Filter Engine**:
   - Relational fields: `ip.src`, `ip.dst`, `ip.addr`, `tcp.port`, `udp.port`, `frame.len`, `frame.number`, `http.request.method`, `http.response.code`, `dns.qry.name`, `tls.sni`, `contains`, etc.
   - Boolean operators: `&&`, `and`, `||`, `or`, `!`, `not`.
@@ -71,6 +77,10 @@ NETRA is an independent, lightweight, high-performance network intelligence plat
 - **OS Fingerprinting Engine (`-O`)**:
   - Heuristic analysis based on initial TTL, TCP window sizes, DF flags, and service banner correlations.
   - Identification of Linux, Microsoft Windows, Apple macOS / Darwin, and network embedded devices with confidence scoring.
+- **Nmap Hop-by-Hop Traceroute (`--traceroute`)**:
+  - Determines network path hops and round-trip latency (RTT) per hop toward target.
+- **NETRA Scripting Engine (NSE) / Vulnerability Audit (`-sC`)**:
+  - Active security auditing checking for Anonymous FTP login, legacy SMBv1 / EternalBlue exposure, unauthenticated Redis access, and missing HTTP security headers (HSTS, CSP, X-Frame-Options).
 - **Port Presets & Custom Expressions**:
   - Fast / Top 100 ports (`-F`)
   - Default Top 1000 ports
@@ -164,12 +174,21 @@ netra discover --target 192.168.1.1-50
 
 # Run dedicated OS fingerprinting probe
 netra os-detect --target 192.168.1.1
+
+# Run hop-by-hop network path traceroute
+netra traceroute --target 8.8.8.8 --max-hops 20
+
+# Launch NETRA Scripting Engine (NSE) vulnerability & security audit
+netra audit --target 192.168.1.1 --ports 21,80,443,445,6379,8080
 ```
 
 ### Wireshark Packet Inspection & Forensics
 ```bash
 # Analyze PCAP capture with protocol filter
 netra analyze --file capture.pcap --filter "http || dns"
+
+# Run Wireshark Expert Information analysis (errors, warnings, TCP zero window, resets)
+netra expert --file capture.pcap
 
 # Filter by source IP and destination port
 netra analyze --file capture.pcap --filter "ip.src == 192.168.1.50 && tcp.port == 443"

@@ -20,6 +20,7 @@ netra-export = { path = "../netra-export" }
 
 serde.workspace = true
 tokio.workspace = true
+chrono.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

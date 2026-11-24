@@ -1,4 +1,4 @@
-import { Button, VerticalBox, HorizontalBox, LineEdit, ScrollView, ListView } from "std-widgets.slint";
+import { Button, VerticalBox, HorizontalBox, LineEdit, ScrollView, ListView, CheckBox } from "std-widgets.slint";
 
 export struct PacketItem {
     index: int,
@@ -7,6 +7,8 @@ export struct PacketItem {
     destination: string,
     length: int,
     summary: string,
+    bg_color: color,
+    fg_color: color,
 }
 
 export struct DissectedLayerItem {
@@ -41,20 +43,45 @@ export struct ProtocolStatItem {
     packets: int,
 }
 
+export struct ExpertItem {
+    packet_index: int,
+    severity: string,
+    group: string,
+    protocol: string,
+    message: string,
+}
+
+export struct TracerouteItem {
+    hop: int,
+    ip: string,
+    rtt: string,
+    status: string,
+}
+
+export struct VulnItem {
+    id: string,
+    title: string,
+    severity: string,
+    port: string,
+    description: string,
+    remediation: string,
+}
+
 export component MainWindow inherits Window {
     title: "NETRA - Unified Network Intelligence, Packet Dissection & Scanning Platform";
-    preferred-width: 1200px;
-    preferred-height: 800px;
+    preferred-width: 1240px;
+    preferred-height: 820px;
     background: #0d1117;
     default-font-family: "Segoe UI, sans-serif";
 
     in-out property <string> active-nav: "packets";
     in-out property <string> storage-mode: "Portable Mode (Active)";
-    in-out property <string> status-message: "NETRA Core Online | 0 packets loaded";
+    in-out property <string> status-message: "NETRA Core Online | Ready";
     in-out property <int> known-hosts-count: 0;
     in-out property <int> total-packets-count: 0;
     in-out property <int> open-ports-count: 0;
 
+    // Filter & Scanner
     in-out property <string> filter-input: "";
     in-out property <string> target-input: "127.0.0.1";
     in-out property <string> ports-input: "top-100";
@@ -63,6 +90,7 @@ export component MainWindow inherits Window {
     in-out property <string> hexdump-content: "Select a packet in the table above to view raw bytes.";
     in-out property <string> os-match-text: "No scan executed yet. Start an Nmap scan to detect OS & services.";
 
+    // Data lists
     in-out property <[PacketItem]> packet-list: [];
     in-out property <[DissectedLayerItem]> layer-list: [];
     in-out property <[ScannedPortItem]> scan-results: [];
@@ -70,6 +98,35 @@ export component MainWindow inherits Window {
     in-out property <[ConversationItem]> conversation-list: [];
     in-out property <[ProtocolStatItem]> protocol-stats: [];
 
+    // Expert Info
+    in-out property <[ExpertItem]> expert-list: [];
+    in-out property <int> expert-errors-count: 0;
+    in-out property <int> expert-warns-count: 0;
+    in-out property <int> expert-notes-count: 0;
+
+    // Traceroute
+    in-out property <string> traceroute-target: "127.0.0.1";
+    in-out property <[TracerouteItem]> traceroute-list: [];
+
+    // Vulnerability Audit (NSE)
+    in-out property <string> audit-target: "127.0.0.1";
+    in-out property <[VulnItem]> vuln-list: [];
+    in-out property <int> vulns-count: 0;
+
+    // Settings
+    in-out property <bool> setting-offline: true;
+    in-out property <bool> setting-checksum: true;
+    in-out property <bool> setting-relative-seq: true;
+    in-out property <bool> setting-tcp-reassembly: true;
+    in-out property <bool> setting-desegment-ssl: true;
+    in-out property <bool> setting-audit-ciphers: true;
+    in-out property <bool> setting-audit-anon-ftp: true;
+    in-out property <bool> setting-audit-smb: true;
+    in-out property <string> setting-time-format: "Relative Time";
+    in-out property <string> setting-scan-type: "TCP Connect (-sT)";
+    in-out property <string> setting-snaplen: "65535";
+
+    // Callbacks
     callback nav-changed(string);
     callback load-capture-file();
     callback apply-filter(string);
@@ -77,12 +134,16 @@ export component MainWindow inherits Window {
     callback run-scan(string, string, int);
     callback run-discovery(string);
     callback refresh-stats();
+    callback load-expert-info();
+    callback run-traceroute(string);
+    callback run-audit(string);
+    callback save-settings();
 
     VerticalBox {
         padding: 0px;
         spacing: 0px;
 
-        // Header / Top Navigation Bar
+        // Top Navigation Bar
         Rectangle {
             height: 56px;
             background: #161b22;
@@ -109,7 +170,7 @@ export component MainWindow inherits Window {
                 }
 
                 HorizontalBox {
-                    spacing: 16px;
+                    spacing: 12px;
                     Rectangle {
                         background: #1f2937;
                         border-radius: 4px;
@@ -132,21 +193,21 @@ export component MainWindow inherits Window {
             }
         }
 
-        // Main Layout (Sidebar + Content Area)
+        // Main Layout
         HorizontalBox {
             padding: 0px;
             spacing: 0px;
 
             // Sidebar
             Rectangle {
-                width: 230px;
+                width: 220px;
                 background: #0d1117;
                 border-width: 1px;
                 border-color: #30363d;
 
                 VerticalBox {
-                    padding: 14px;
-                    spacing: 8px;
+                    padding: 12px;
+                    spacing: 6px;
                     alignment: start;
 
                     Button {
@@ -154,8 +215,20 @@ export component MainWindow inherits Window {
                         clicked => { root.active-nav = "packets"; root.nav-changed("packets"); }
                     }
                     Button {
+                        text: "  Expert Info";
+                        clicked => { root.active-nav = "expert"; root.load-expert-info(); }
+                    }
+                    Button {
                         text: "  Nmap Scanner";
                         clicked => { root.active-nav = "scanner"; root.nav-changed("scanner"); }
+                    }
+                    Button {
+                        text: "  Traceroute";
+                        clicked => { root.active-nav = "traceroute"; }
+                    }
+                    Button {
+                        text: "  Security Audit (NSE)";
+                        clicked => { root.active-nav = "audit"; }
                     }
                     Button {
                         text: "  Network Inventory";
@@ -170,8 +243,8 @@ export component MainWindow inherits Window {
                         clicked => { root.active-nav = "overview"; root.nav-changed("overview"); }
                     }
                     Button {
-                        text: "  Settings & Privacy";
-                        clicked => { root.active-nav = "settings"; root.nav-changed("settings"); }
+                        text: "  Settings & Config";
+                        clicked => { root.active-nav = "settings"; }
                     }
                 }
             }
@@ -180,26 +253,26 @@ export component MainWindow inherits Window {
             Rectangle {
                 background: #090d13;
                 VerticalBox {
-                    padding: 16px;
-                    spacing: 12px;
+                    padding: 14px;
+                    spacing: 10px;
 
                     // ==============================================================
                     // 1. WIRESHARK 3-PANE PACKET ANALYZER
                     // ==============================================================
                     if root.active-nav == "packets": VerticalBox {
-                        spacing: 10px;
+                        spacing: 8px;
 
-                        // Wireshark Display Filter Bar
+                        // Display Filter Bar
                         HorizontalBox {
-                            spacing: 10px;
-                            height: 36px;
+                            spacing: 8px;
+                            height: 34px;
                             LineEdit {
-                                placeholder-text: "Apply a display filter ... (e.g. ip.src == 192.168.1.1, tcp.port == 80, dns, http, tls)";
+                                placeholder-text: "Apply Wireshark display filter ... (e.g. tcp.port == 80, http, dns, ip.src == 192.168.1.1)";
                                 text <=> root.filter-input;
                                 accepted => { root.apply-filter(root.filter-input); }
                             }
                             Button {
-                                text: "Apply Filter";
+                                text: "Apply";
                                 clicked => { root.apply-filter(root.filter-input); }
                             }
                             Button {
@@ -207,22 +280,22 @@ export component MainWindow inherits Window {
                                 clicked => { root.filter-input = ""; root.apply-filter(""); }
                             }
                             Button {
-                                text: "Open PCAP File";
+                                text: "Load Sample";
                                 clicked => { root.load-capture-file(); }
                             }
                         }
 
-                        // PANE 1: Top Packet List Table
+                        // PANE 1: Top Packet List Table (with Wireshark Color-Coding)
                         Rectangle {
                             background: #161b22;
                             border-radius: 4px;
                             border-color: #30363d;
                             border-width: 1px;
-                            height: 240px;
+                            height: 250px;
 
                             VerticalBox {
-                                padding: 8px;
-                                spacing: 4px;
+                                padding: 6px;
+                                spacing: 2px;
                                 HorizontalBox {
                                     padding-left: 6px;
                                     padding-right: 6px;
@@ -238,8 +311,8 @@ export component MainWindow inherits Window {
                                 ListView {
                                     for item in root.packet-list: Rectangle {
                                         height: 24px;
-                                        background: item.index == root.selected-packet-index ? #1f2937 : transparent;
-                                        border-radius: 3px;
+                                        background: item.index == root.selected-packet-index ? #21262d : item.bg_color;
+                                        border-radius: 2px;
                                         TouchArea {
                                             clicked => {
                                                 root.selected-packet-index = item.index;
@@ -250,20 +323,20 @@ export component MainWindow inherits Window {
                                             padding-left: 6px;
                                             padding-right: 6px;
                                             Text { text: item.index; width: 45px; font-size: 11px; color: #8b949e; vertical-alignment: center; }
-                                            Text { text: item.protocol; width: 75px; font-size: 11px; font-weight: 700; color: #58a6ff; vertical-alignment: center; }
+                                            Text { text: item.protocol; width: 75px; font-size: 11px; font-weight: 700; color: item.fg_color; vertical-alignment: center; }
                                             Text { text: item.source; width: 140px; font-size: 11px; color: #f0f6fc; vertical-alignment: center; }
                                             Text { text: item.destination; width: 140px; font-size: 11px; color: #f0f6fc; vertical-alignment: center; }
                                             Text { text: item.length; width: 60px; font-size: 11px; color: #8b949e; vertical-alignment: center; }
-                                            Text { text: item.summary; font-size: 11px; color: #c9d1d9; vertical-alignment: center; }
+                                            Text { text: item.summary; font-size: 11px; color: item.fg_color; vertical-alignment: center; }
                                         }
                                     }
                                 }
                             }
                         }
 
-                        // Bottom split: PANE 2 (Protocol Details Tree) + PANE 3 (Synchronized Hex Dump)
+                        // Split PANE 2 (Tree) + PANE 3 (Hex Dump)
                         HorizontalBox {
-                            spacing: 10px;
+                            spacing: 8px;
 
                             // PANE 2: Packet Details Tree
                             Rectangle {
@@ -285,9 +358,9 @@ export component MainWindow inherits Window {
                                     Rectangle { height: 1px; background: #30363d; }
                                     ListView {
                                         for layer in root.layer-list: VerticalBox {
-                                            padding-top: 4px;
-                                            padding-bottom: 4px;
-                                            spacing: 2px;
+                                            padding-top: 3px;
+                                            padding-bottom: 3px;
+                                            spacing: 1px;
                                             Text {
                                                 text: "▸ " + layer.name;
                                                 font-size: 11px;
@@ -335,10 +408,89 @@ export component MainWindow inherits Window {
                     }
 
                     // ==============================================================
-                    // 2. NMAP NETWORK SCANNER TAB
+                    // 2. WIRESHARK EXPERT INFO TAB
+                    // ==============================================================
+                    if root.active-nav == "expert": VerticalBox {
+                        spacing: 10px;
+                        Text { text: "Wireshark Expert Information & Protocol Health"; font-size: 18px; font-weight: 700; color: #f0f6fc; }
+
+                        HorizontalBox {
+                            spacing: 12px;
+                            Rectangle {
+                                background: #161b22;
+                                border-radius: 6px;
+                                border-color: #30363d;
+                                border-width: 1px;
+                                height: 75px;
+                                VerticalBox {
+                                    padding: 10px;
+                                    Text { text: "ERRORS"; font-size: 11px; color: #ff7b72; font-weight: 700; }
+                                    Text { text: root.expert-errors-count; font-size: 22px; font-weight: 700; color: #ff7b72; }
+                                }
+                            }
+                            Rectangle {
+                                background: #161b22;
+                                border-radius: 6px;
+                                border-color: #30363d;
+                                border-width: 1px;
+                                height: 75px;
+                                VerticalBox {
+                                    padding: 10px;
+                                    Text { text: "WARNINGS"; font-size: 11px; color: #d29922; font-weight: 700; }
+                                    Text { text: root.expert-warns-count; font-size: 22px; font-weight: 700; color: #d29922; }
+                                }
+                            }
+                            Rectangle {
+                                background: #161b22;
+                                border-radius: 6px;
+                                border-color: #30363d;
+                                border-width: 1px;
+                                height: 75px;
+                                VerticalBox {
+                                    padding: 10px;
+                                    Text { text: "NOTES & CHATS"; font-size: 11px; color: #58a6ff; font-weight: 700; }
+                                    Text { text: root.expert-notes-count; font-size: 22px; font-weight: 700; color: #58a6ff; }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            background: #161b22;
+                            border-radius: 6px;
+                            border-color: #30363d;
+                            border-width: 1px;
+                            height: 440px;
+
+                            VerticalBox {
+                                padding: 12px;
+                                spacing: 6px;
+                                HorizontalBox {
+                                    Text { text: "Pkt #"; width: 60px; font-size: 12px; font-weight: 700; color: #8b949e; }
+                                    Text { text: "Severity"; width: 90px; font-size: 12px; font-weight: 700; color: #8b949e; }
+                                    Text { text: "Group"; width: 120px; font-size: 12px; font-weight: 700; color: #8b949e; }
+                                    Text { text: "Protocol"; width: 80px; font-size: 12px; font-weight: 700; color: #8b949e; }
+                                    Text { text: "Expert Summary & Message"; font-size: 12px; font-weight: 700; color: #8b949e; }
+                                }
+                                Rectangle { height: 1px; background: #30363d; }
+                                ListView {
+                                    for alert in root.expert-list: HorizontalBox {
+                                        height: 28px;
+                                        Text { text: alert.packet_index; width: 60px; font-size: 12px; color: #8b949e; vertical-alignment: center; }
+                                        Text { text: alert.severity; width: 90px; font-size: 12px; font-weight: 700; color: alert.severity == "Error" ? #ff7b72 : (alert.severity == "Warning" ? #d29922 : #58a6ff); vertical-alignment: center; }
+                                        Text { text: alert.group; width: 120px; font-size: 12px; color: #f0f6fc; vertical-alignment: center; }
+                                        Text { text: alert.protocol; width: 80px; font-size: 12px; color: #79c0ff; vertical-alignment: center; }
+                                        Text { text: alert.message; font-size: 12px; color: #c9d1d9; vertical-alignment: center; }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ==============================================================
+                    // 3. NMAP NETWORK SCANNER TAB
                     // ==============================================================
                     if root.active-nav == "scanner": VerticalBox {
-                        spacing: 12px;
+                        spacing: 10px;
 
                         // Configuration Row
                         Rectangle {
@@ -348,39 +500,33 @@ export component MainWindow inherits Window {
                             border-width: 1px;
 
                             VerticalBox {
-                                padding: 12px;
-                                spacing: 10px;
+                                padding: 10px;
+                                spacing: 8px;
                                 HorizontalBox {
-                                    spacing: 12px;
+                                    spacing: 10px;
                                     VerticalBox {
-                                        spacing: 4px;
-                                        Text { text: "Target Specification (IP, Subnet, Hostname):"; font-size: 11px; color: #8b949e; }
-                                        LineEdit {
-                                            text <=> root.target-input;
-                                            placeholder-text: "e.g. 127.0.0.1, 192.168.1.0/24, scanme.nmap.org";
-                                        }
+                                        spacing: 3px;
+                                        Text { text: "Target (IP, Subnet, Hostname):"; font-size: 11px; color: #8b949e; }
+                                        LineEdit { text <=> root.target-input; }
                                     }
                                     VerticalBox {
-                                        spacing: 4px;
-                                        Text { text: "Ports (top-100, top-1000, -p-, 80,443):"; font-size: 11px; color: #8b949e; }
-                                        LineEdit {
-                                            text <=> root.ports-input;
-                                            placeholder-text: "top-100";
-                                        }
+                                        spacing: 3px;
+                                        Text { text: "Ports (top-100, top-1000, 80,443):"; font-size: 11px; color: #8b949e; }
+                                        LineEdit { text <=> root.ports-input; }
                                     }
                                     VerticalBox {
-                                        spacing: 4px;
-                                        Text { text: "Timing Template:"; font-size: 11px; color: #8b949e; }
+                                        spacing: 3px;
+                                        Text { text: "Timing:"; font-size: 11px; color: #8b949e; }
                                         HorizontalBox {
-                                            spacing: 6px;
-                                            Button { text: "T3 Normal"; clicked => { root.timing-level = 3; } }
-                                            Button { text: "T4 Aggressive"; clicked => { root.timing-level = 4; } }
+                                            spacing: 4px;
+                                            Button { text: "T3"; clicked => { root.timing-level = 3; } }
+                                            Button { text: "T4"; clicked => { root.timing-level = 4; } }
                                         }
                                     }
                                     VerticalBox {
                                         alignment: end;
                                         Button {
-                                            text: "  Start Nmap Scan  ";
+                                            text: "  Start Scan  ";
                                             clicked => { root.run-scan(root.target-input, root.ports-input, root.timing-level); }
                                         }
                                     }
@@ -388,16 +534,16 @@ export component MainWindow inherits Window {
                             }
                         }
 
-                        // OS Match & Heuristic Banner
+                        // OS Match
                         Rectangle {
                             background: #161b22;
                             border-radius: 6px;
                             border-color: #30363d;
                             border-width: 1px;
                             VerticalBox {
-                                padding: 12px;
-                                spacing: 4px;
-                                Text { text: "Operating System & Device Fingerprint (-O):"; font-size: 12px; font-weight: 700; color: #d2a8ff; }
+                                padding: 10px;
+                                spacing: 3px;
+                                Text { text: "Operating System & Device Fingerprint (-O):"; font-size: 11px; font-weight: 700; color: #d2a8ff; }
                                 Text { text: root.os-match-text; font-size: 12px; color: #c9d1d9; }
                             }
                         }
@@ -408,11 +554,11 @@ export component MainWindow inherits Window {
                             border-radius: 6px;
                             border-color: #30363d;
                             border-width: 1px;
-                            height: 340px;
+                            height: 350px;
 
                             VerticalBox {
-                                padding: 12px;
-                                spacing: 6px;
+                                padding: 10px;
+                                spacing: 4px;
                                 HorizontalBox {
                                     Text { text: "Port / Protocol"; width: 120px; font-size: 12px; font-weight: 700; color: #8b949e; }
                                     Text { text: "State"; width: 90px; font-size: 12px; font-weight: 700; color: #8b949e; }
@@ -434,10 +580,114 @@ export component MainWindow inherits Window {
                     }
 
                     // ==============================================================
-                    // 3. NETWORK INVENTORY & TOPOLOGY
+                    // 4. TRACEROUTE TAB
+                    // ==============================================================
+                    if root.active-nav == "traceroute": VerticalBox {
+                        spacing: 10px;
+                        Text { text: "Nmap Hop-by-Hop Traceroute Engine"; font-size: 18px; font-weight: 700; color: #f0f6fc; }
+
+                        HorizontalBox {
+                            spacing: 10px;
+                            LineEdit {
+                                placeholder-text: "Target IP or hostname (e.g. 1.1.1.1, scanme.nmap.org)";
+                                text <=> root.traceroute-target;
+                            }
+                            Button {
+                                text: "Run Traceroute";
+                                clicked => { root.run-traceroute(root.traceroute-target); }
+                            }
+                        }
+
+                        Rectangle {
+                            background: #161b22;
+                            border-radius: 6px;
+                            border-color: #30363d;
+                            border-width: 1px;
+                            height: 460px;
+
+                            VerticalBox {
+                                padding: 12px;
+                                spacing: 6px;
+                                HorizontalBox {
+                                    Text { text: "Hop #"; width: 70px; font-size: 12px; font-weight: 700; color: #8b949e; }
+                                    Text { text: "IP Address"; width: 180px; font-size: 12px; font-weight: 700; color: #8b949e; }
+                                    Text { text: "RTT / Latency"; width: 120px; font-size: 12px; font-weight: 700; color: #8b949e; }
+                                    Text { text: "Hop Status / Target Resolution"; font-size: 12px; font-weight: 700; color: #8b949e; }
+                                }
+                                Rectangle { height: 1px; background: #30363d; }
+                                ListView {
+                                    for h in root.traceroute-list: HorizontalBox {
+                                        height: 28px;
+                                        Text { text: h.hop; width: 70px; font-size: 12px; color: #58a6ff; font-weight: 700; vertical-alignment: center; }
+                                        Text { text: h.ip; width: 180px; font-size: 12px; color: #f0f6fc; vertical-alignment: center; }
+                                        Text { text: h.rtt; width: 120px; font-size: 12px; color: #3fb950; vertical-alignment: center; }
+                                        Text { text: h.status; font-size: 12px; color: #c9d1d9; vertical-alignment: center; }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ==============================================================
+                    // 5. SECURITY AUDIT (NSE) TAB
+                    // ==============================================================
+                    if root.active-nav == "audit": VerticalBox {
+                        spacing: 10px;
+                        Text { text: "NETRA Scripting Engine (NSE) & Vulnerability Audit"; font-size: 18px; font-weight: 700; color: #f0f6fc; }
+
+                        HorizontalBox {
+                            spacing: 10px;
+                            LineEdit {
+                                placeholder-text: "Audit Target IP or Hostname (e.g. 127.0.0.1)";
+                                text <=> root.audit-target;
+                            }
+                            Button {
+                                text: "Launch Vulnerability Audit";
+                                clicked => { root.run-audit(root.audit-target); }
+                            }
+                        }
+
+                        Rectangle {
+                            background: #161b22;
+                            border-radius: 6px;
+                            border-color: #30363d;
+                            border-width: 1px;
+                            height: 460px;
+
+                            VerticalBox {
+                                padding: 12px;
+                                spacing: 6px;
+                                HorizontalBox {
+                                    Text { text: "Severity"; width: 90px; font-size: 12px; font-weight: 700; color: #8b949e; }
+                                    Text { text: "Vulnerability / Audit Title"; width: 340px; font-size: 12px; font-weight: 700; color: #8b949e; }
+                                    Text { text: "Port"; width: 60px; font-size: 12px; font-weight: 700; color: #8b949e; }
+                                    Text { text: "Description & Remediation"; font-size: 12px; font-weight: 700; color: #8b949e; }
+                                }
+                                Rectangle { height: 1px; background: #30363d; }
+                                ListView {
+                                    for v in root.vuln-list: VerticalBox {
+                                        padding-top: 4px;
+                                        padding-bottom: 4px;
+                                        spacing: 2px;
+                                        HorizontalBox {
+                                            Text { text: v.severity; width: 90px; font-size: 12px; font-weight: 700; color: v.severity == "CRITICAL" ? #f85149 : (v.severity == "HIGH" ? #ff7b72 : #d29922); }
+                                            Text { text: v.title; width: 340px; font-size: 12px; font-weight: 700; color: #f0f6fc; }
+                                            Text { text: v.port; width: 60px; font-size: 12px; color: #58a6ff; }
+                                            Text { text: v.description; font-size: 11px; color: #c9d1d9; }
+                                        }
+                                        Text { text: "  Remediation: " + v.remediation; font-size: 11px; color: #3fb950; }
+                                        Rectangle { height: 1px; background: #21262d; }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ==============================================================
+                    // 6. NETWORK INVENTORY & TOPOLOGY
                     // ==============================================================
                     if root.active-nav == "inventory": VerticalBox {
-                        spacing: 12px;
+                        spacing: 10px;
                         Text { text: "Correlated Local Network Device Inventory"; font-size: 18px; font-weight: 700; color: #f0f6fc; }
                         Rectangle {
                             background: #161b22;
@@ -470,14 +720,14 @@ export component MainWindow inherits Window {
                     }
 
                     // ==============================================================
-                    // 4. TRAFFIC STATISTICS TAB
+                    // 7. TRAFFIC STATISTICS TAB
                     // ==============================================================
                     if root.active-nav == "stats": HorizontalBox {
                         spacing: 12px;
 
                         // Protocol Distribution
                         Rectangle {
-                            width: 400px;
+                            width: 380px;
                             height: 500px;
                             background: #161b22;
                             border-radius: 6px;
@@ -530,29 +780,24 @@ export component MainWindow inherits Window {
                     }
 
                     // ==============================================================
-                    // 5. OVERVIEW DASHBOARD
+                    // 8. OVERVIEW DASHBOARD
                     // ==============================================================
                     if root.active-nav == "overview": VerticalBox {
-                        spacing: 16px;
-                        Text {
-                            text: "Unified Network Operations Dashboard";
-                            font-size: 18px;
-                            font-weight: 700;
-                            color: #f0f6fc;
-                        }
+                        spacing: 14px;
+                        Text { text: "Unified Network Operations Dashboard"; font-size: 18px; font-weight: 700; color: #f0f6fc; }
 
                         HorizontalBox {
-                            spacing: 16px;
+                            spacing: 14px;
                             Rectangle {
                                 background: #161b22;
                                 border-radius: 6px;
                                 border-color: #30363d;
                                 border-width: 1px;
-                                height: 90px;
+                                height: 85px;
                                 VerticalBox {
-                                    padding: 12px;
+                                    padding: 10px;
                                     Text { text: "DISCOVERED HOSTS"; font-size: 11px; color: #8b949e; font-weight: 600; }
-                                    Text { text: root.known-hosts-count; font-size: 24px; font-weight: 700; color: #58a6ff; }
+                                    Text { text: root.known-hosts-count; font-size: 22px; font-weight: 700; color: #58a6ff; }
                                 }
                             }
                             Rectangle {
@@ -560,11 +805,11 @@ export component MainWindow inherits Window {
                                 border-radius: 6px;
                                 border-color: #30363d;
                                 border-width: 1px;
-                                height: 90px;
+                                height: 85px;
                                 VerticalBox {
-                                    padding: 12px;
+                                    padding: 10px;
                                     Text { text: "ANALYZED PACKETS"; font-size: 11px; color: #8b949e; font-weight: 600; }
-                                    Text { text: root.total-packets-count; font-size: 24px; font-weight: 700; color: #3fb950; }
+                                    Text { text: root.total-packets-count; font-size: 22px; font-weight: 700; color: #3fb950; }
                                 }
                             }
                             Rectangle {
@@ -572,9 +817,9 @@ export component MainWindow inherits Window {
                                 border-radius: 6px;
                                 border-color: #30363d;
                                 border-width: 1px;
-                                height: 90px;
+                                height: 85px;
                                 VerticalBox {
-                                    padding: 12px;
+                                    padding: 10px;
                                     Text { text: "STORAGE SUBSYSTEM"; font-size: 11px; color: #8b949e; font-weight: 600; }
                                     Text { text: "SQLite WAL"; font-size: 20px; font-weight: 700; color: #d2a8ff; }
                                 }
@@ -587,35 +832,67 @@ export component MainWindow inherits Window {
                             border-color: #30363d;
                             border-width: 1px;
                             VerticalBox {
-                                padding: 16px;
+                                padding: 14px;
                                 spacing: 8px;
-                                Text { text: "Wireshark & Nmap Unified Engine Guarantees:"; font-size: 14px; font-weight: 700; color: #f0f6fc; }
-                                Text { text: "✔ 100% Offline: Strictly zero telemetry, telemetry probes, or external vendor network calls."; font-size: 12px; color: #c9d1d9; }
-                                Text { text: "✔ Bounded Memory: Incremental streaming PCAP/PCAPNG readers never load full capture dumps to RAM."; font-size: 12px; color: #c9d1d9; }
-                                Text { text: "✔ High Performance: Zero-allocation zero-copy packet header slicing running at ~1.86M pps."; font-size: 12px; color: #c9d1d9; }
-                                Text { text: "✔ Cross-Platform: 100% Rust architecture with Slint native GUI and Clap CLI."; font-size: 12px; color: #c9d1d9; }
+                                Text { text: "Wireshark & Nmap Unified Guarantees:"; font-size: 14px; font-weight: 700; color: #f0f6fc; }
+                                Text { text: "✔ 100% Offline: Strictly zero telemetry, analytics, or background tracking."; font-size: 12px; color: #c9d1d9; }
+                                Text { text: "✔ Wireshark Parity: 3-pane dissection, Expert Info, color coding, streaming PCAP/PCAPNG."; font-size: 12px; color: #c9d1d9; }
+                                Text { text: "✔ Nmap Parity: Port scanner, timing templates T0-T5, OS fingerprinting -O, Traceroute, NSE."; font-size: 12px; color: #c9d1d9; }
+                                Text { text: "✔ Portable Zero-Config: Run anywhere with SQLite WAL journaling and settings in-folder."; font-size: 12px; color: #c9d1d9; }
                             }
                         }
                     }
 
                     // ==============================================================
-                    // 6. SETTINGS & SYSTEM INFO
+                    // 9. SETTINGS & PREFERENCES (ALL MINOR SETTINGS)
                     // ==============================================================
                     if root.active-nav == "settings": VerticalBox {
-                        spacing: 12px;
-                        Text { text: "Settings & System Information"; font-size: 18px; font-weight: 700; color: #f0f6fc; }
-                        Rectangle {
-                            background: #161b22;
-                            border-radius: 6px;
-                            border-color: #30363d;
-                            border-width: 1px;
-                            VerticalBox {
-                                padding: 16px;
-                                spacing: 8px;
-                                Text { text: "Application: NETRA Platform v0.1.0"; color: #f0f6fc; font-weight: 700; }
-                                Text { text: "License: Apache License 2.0 (Independent Rust Implementation)"; color: #8b949e; }
-                                Text { text: "Telemetry Status: Permanently Disabled (Zero Telemetry)"; color: #3fb950; font-weight: 600; }
-                                Text { text: "Update Checks: Disabled by Default"; color: #8b949e; }
+                        spacing: 10px;
+                        Text { text: "Detailed Engine Settings & Preferences"; font-size: 18px; font-weight: 700; color: #f0f6fc; }
+
+                        HorizontalBox {
+                            spacing: 12px;
+
+                            // Left Column: Wireshark Dissection Settings
+                            Rectangle {
+                                background: #161b22;
+                                border-radius: 6px;
+                                border-color: #30363d;
+                                border-width: 1px;
+                                VerticalBox {
+                                    padding: 14px;
+                                    spacing: 8px;
+                                    Text { text: "Wireshark Dissection & Capture Settings:"; font-size: 13px; font-weight: 700; color: #58a6ff; }
+                                    CheckBox { text: "Relative TCP sequence numbers (seq=0 on SYN)"; checked <=> root.setting-relative-seq; }
+                                    CheckBox { text: "Verify packet checksums (IP/TCP/UDP)"; checked <=> root.setting-checksum; }
+                                    CheckBox { text: "Reassemble out-of-order TCP streams"; checked <=> root.setting-tcp-reassembly; }
+                                    CheckBox { text: "Desegment SSL / TLS application records"; checked <=> root.setting-desegment-ssl; }
+                                    HorizontalBox {
+                                        Text { text: "Snapshot Length (Snaplen):"; font-size: 12px; color: #8b949e; vertical-alignment: center; }
+                                        LineEdit { text <=> root.setting-snaplen; width: 100px; }
+                                    }
+                                }
+                            }
+
+                            // Right Column: Nmap Scanner & Security Audit Settings
+                            Rectangle {
+                                background: #161b22;
+                                border-radius: 6px;
+                                border-color: #30363d;
+                                border-width: 1px;
+                                VerticalBox {
+                                    padding: 14px;
+                                    spacing: 8px;
+                                    Text { text: "Nmap Scanner & NSE Audit Settings:"; font-size: 13px; font-weight: 700; color: #3fb950; }
+                                    CheckBox { text: "Enforce 100% Offline Mode (No cloud calls)"; checked <=> root.setting-offline; }
+                                    CheckBox { text: "Enable Anonymous FTP login audit"; checked <=> root.setting-audit-anon-ftp; }
+                                    CheckBox { text: "Enable SMBv1 / MS17-010 EternalBlue probe"; checked <=> root.setting-audit-smb; }
+                                    CheckBox { text: "Audit HTTP security headers & clickjacking"; checked <=> root.setting-audit-ciphers; }
+                                    Button {
+                                        text: "Save & Apply Settings";
+                                        clicked => { root.save-settings(); }
+                                    }
+                                }
                             }
                         }
                     }
@@ -640,7 +917,7 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                 }
                 Text {
-                    text: "NETRA Core 0.1.0";
+                    text: "NETRA Core 0.1.0 | Offline Guard Active";
                     font-size: 11px;
                     color: #8b949e;
                     vertical-alignment: center;

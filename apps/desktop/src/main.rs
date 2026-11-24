@@ -1,12 +1,25 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use netra_common::ExpertSeverity;
 use netra_core::NetraCore;
 use netra_discovery::SubnetScanner;
-use netra_parser::{CaptureFileReader, HexDumpViewer, PacketParser};
+use netra_parser::{CaptureFileReader, ColorEngine, HexDumpViewer, PacketParser};
 use netra_scanner::{OsFingerprinter, PortPresets, PortScanner, TimingTemplate};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 slint::include_modules!();
+
+fn parse_color(hex: &str) -> slint::Color {
+    let clean = hex.trim_start_matches('#');
+    if let Ok(val) = u32::from_str_radix(clean, 16) {
+        let r = ((val >> 16) & 0xFF) as u8;
+        let g = ((val >> 8) & 0xFF) as u8;
+        let b = (val & 0xFF) as u8;
+        slint::Color::from_argb_u8(255, r, g, b)
+    } else {
+        slint::Color::from_argb_u8(255, 22, 27, 34)
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -46,6 +59,7 @@ async fn main() -> anyhow::Result<()> {
                     let mut packets = Vec::new();
                     let filter_ref = filter.as_deref().filter(|s| !s.trim().is_empty());
                     let _ = core.analyze_file(capture_path, filter_ref, |pkt| {
+                        let (bg_hex, fg_hex) = ColorEngine::get_packet_colors(&pkt);
                         packets.push(PacketItem {
                             index: pkt.index as i32,
                             protocol: pkt.protocol.to_string().into(),
@@ -53,8 +67,10 @@ async fn main() -> anyhow::Result<()> {
                             destination: pkt.destination_ip.map(|i| i.to_string()).unwrap_or_else(|| "-".to_string()).into(),
                             length: pkt.length as i32,
                             summary: pkt.summary.into(),
+                            bg_color: parse_color(bg_hex),
+                            fg_color: parse_color(fg_hex),
                         });
-                        packets.len() < 200
+                        packets.len() < 300
                     });
 
                     let count = packets.len() as i32;
@@ -139,6 +155,44 @@ async fn main() -> anyhow::Result<()> {
                     }
                     ui.set_layer_list(ModelRc::new(VecModel::from(layers)));
                     ui.set_status_message(format!("Inspecting packet #{} ({} bytes)", index, raw.len()).into());
+                }
+            }
+        });
+    }
+
+    // Callback: Load Wireshark Expert Information
+    {
+        let core = core.clone();
+        let window_weak = main_window.as_weak();
+        main_window.on_load_expert_info(move || {
+            if let Some(ui) = window_weak.upgrade() {
+                let capture_path = Path::new("sample_capture.pcap");
+                if let Ok(alerts) = core.expert_info_for_file(capture_path) {
+                    let mut errs = 0;
+                    let mut warns = 0;
+                    let mut notes = 0;
+                    let mut items = Vec::new();
+
+                    for a in &alerts {
+                        match a.severity {
+                            ExpertSeverity::Error => errs += 1,
+                            ExpertSeverity::Warn => warns += 1,
+                            _ => notes += 1,
+                        }
+                        items.push(ExpertItem {
+                            packet_index: a.packet_index as i32,
+                            severity: a.severity.to_string().into(),
+                            group: a.group.clone().into(),
+                            protocol: a.protocol.clone().into(),
+                            message: a.message.clone().into(),
+                        });
+                    }
+
+                    ui.set_expert_list(ModelRc::new(VecModel::from(items)));
+                    ui.set_expert_errors_count(errs);
+                    ui.set_expert_warns_count(warns);
+                    ui.set_expert_notes_count(notes);
+                    ui.set_status_message(format!("Expert Info: {} warnings/errors identified", errs + warns).into());
                 }
             }
         });
@@ -231,6 +285,125 @@ async fn main() -> anyhow::Result<()> {
                     }
                 });
             });
+        });
+    }
+
+    // Callback: Run Traceroute
+    {
+        let core = core.clone();
+        let window_weak = main_window.as_weak();
+        main_window.on_run_traceroute(move |target_str| {
+            let core = core.clone();
+            let window_weak = window_weak.clone();
+            let target_s = target_str.to_string();
+
+            if let Some(ui) = window_weak.upgrade() {
+                ui.set_status_message(format!("Traceroute running toward {}...", target_s).into());
+            }
+
+            tokio::spawn(async move {
+                let target_ips = SubnetScanner::parse_targets(&target_s).unwrap_or_default();
+                if target_ips.is_empty() {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = window_weak.upgrade() {
+                            ui.set_status_message("Traceroute error: Invalid target IP".into());
+                        }
+                    });
+                    return;
+                }
+
+                let target_ip = target_ips[0];
+                let hops = core.traceroute(target_ip, |_| {}).await;
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = window_weak.upgrade() {
+                        let mut items = Vec::new();
+                        for h in hops {
+                            items.push(TracerouteItem {
+                                hop: h.hop as i32,
+                                ip: h.ip.map(|i| i.to_string()).unwrap_or_else(|| "* * *".to_string()).into(),
+                                rtt: h.rtt_ms.map(|ms| format!("{:.2} ms", ms)).unwrap_or_else(|| "-".to_string()).into(),
+                                status: h.status.into(),
+                            });
+                        }
+                        ui.set_traceroute_list(ModelRc::new(VecModel::from(items)));
+                        ui.set_status_message(format!("Traceroute completed toward {}", target_ip).into());
+                    }
+                });
+            });
+        });
+    }
+
+    // Callback: Run Security Audit (NSE)
+    {
+        let core = core.clone();
+        let window_weak = main_window.as_weak();
+        main_window.on_run_audit(move |target_str| {
+            let core = core.clone();
+            let window_weak = window_weak.clone();
+            let target_s = target_str.to_string();
+
+            if let Some(ui) = window_weak.upgrade() {
+                ui.set_status_message(format!("Vulnerability Audit running against {}...", target_s).into());
+            }
+
+            tokio::spawn(async move {
+                let target_ips = SubnetScanner::parse_targets(&target_s).unwrap_or_default();
+                if target_ips.is_empty() {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = window_weak.upgrade() {
+                            ui.set_status_message("Audit error: Invalid target IP".into());
+                        }
+                    });
+                    return;
+                }
+
+                let target_ip = target_ips[0];
+                let common_ports = vec![21, 80, 443, 445, 6379, 8080];
+                let vulns = core.audit_target(target_ip, &common_ports).await;
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = window_weak.upgrade() {
+                        let mut items = Vec::new();
+                        for v in &vulns {
+                            items.push(VulnItem {
+                                id: v.id.clone().into(),
+                                title: v.title.clone().into(),
+                                severity: v.severity.to_string().into(),
+                                port: v.port.map(|p| p.to_string()).unwrap_or_else(|| "-".to_string()).into(),
+                                description: v.description.clone().into(),
+                                remediation: v.remediation.clone().into(),
+                            });
+                        }
+                        let count = items.len();
+                        ui.set_vuln_list(ModelRc::new(VecModel::from(items)));
+                        ui.set_vulns_count(count as i32);
+                        ui.set_status_message(format!("Vulnerability audit completed: {} issues found on {}", count, target_ip).into());
+                    }
+                });
+            });
+        });
+    }
+
+    // Callback: Save Settings
+    {
+        let core = core.clone();
+        let window_weak = main_window.as_weak();
+        main_window.on_save_settings(move || {
+            if let Some(ui) = window_weak.upgrade() {
+                let mut conf = core.config.clone();
+                conf.general.offline_mode = ui.get_setting_offline();
+                conf.dissection.checksum_verification = ui.get_setting_checksum();
+                conf.dissection.relative_seq_numbers = ui.get_setting_relative_seq();
+                conf.dissection.reassemble_tcp = ui.get_setting_tcp_reassembly();
+                conf.dissection.desegment_ssl = ui.get_setting_desegment_ssl();
+                conf.security_audit.check_anon_ftp = ui.get_setting_audit_anon_ftp();
+                conf.security_audit.check_smb_signing = ui.get_setting_audit_smb();
+                conf.security_audit.check_http_headers = ui.get_setting_audit_ciphers();
+
+                let _ = std::fs::write(&core.paths.config_file, toml::to_string_pretty(&conf).unwrap_or_default());
+                ui.set_status_message("Engine settings saved and applied successfully.".into());
+            }
         });
     }
 

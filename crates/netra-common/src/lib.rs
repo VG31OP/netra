@@ -81,6 +81,8 @@ pub enum NetworkProtocol {
     Ntp,
     Mdns,
     Ssh,
+    Vlan,
+    Icmpv6,
     Unknown(String),
 }
 
@@ -103,6 +105,8 @@ impl fmt::Display for NetworkProtocol {
             Self::Ntp => write!(f, "NTP"),
             Self::Mdns => write!(f, "mDNS"),
             Self::Ssh => write!(f, "SSH"),
+            Self::Vlan => write!(f, "VLAN"),
+            Self::Icmpv6 => write!(f, "ICMPv6"),
             Self::Unknown(name) => write!(f, "{}", name),
         }
     }
@@ -189,6 +193,105 @@ impl ServiceRecord {
             extra_info: None,
             banner: None,
             last_observed: Utc::now(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ExpertSeverity {
+    Chat,
+    Note,
+    Warn,
+    Error,
+}
+
+impl fmt::Display for ExpertSeverity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Chat => write!(f, "Chat"),
+            Self::Note => write!(f, "Note"),
+            Self::Warn => write!(f, "Warning"),
+            Self::Error => write!(f, "Error"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExpertInfo {
+    pub packet_index: u64,
+    pub severity: ExpertSeverity,
+    pub group: String,
+    pub protocol: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TracerouteHop {
+    pub hop: u8,
+    pub ip: Option<IpAddr>,
+    pub rtt_ms: Option<f32>,
+    pub hostname: Option<String>,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum VulnerabilitySeverity {
+    Info,
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+impl fmt::Display for VulnerabilitySeverity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Info => write!(f, "INFO"),
+            Self::Low => write!(f, "LOW"),
+            Self::Medium => write!(f, "MEDIUM"),
+            Self::High => write!(f, "HIGH"),
+            Self::Critical => write!(f, "CRITICAL"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecurityVulnerability {
+    pub id: String,
+    pub title: String,
+    pub severity: VulnerabilitySeverity,
+    pub target: IpAddr,
+    pub port: Option<u16>,
+    pub service: String,
+    pub description: String,
+    pub evidence: String,
+    pub remediation: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TcpScanType {
+    #[default]
+    Connect,
+    Syn,
+    Fin,
+    Null,
+    Xmas,
+    Ack,
+    Window,
+    Maimon,
+}
+
+impl fmt::Display for TcpScanType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Connect => write!(f, "Connect (-sT)"),
+            Self::Syn => write!(f, "SYN Stealth (-sS)"),
+            Self::Fin => write!(f, "FIN (-sF)"),
+            Self::Null => write!(f, "NULL (-sN)"),
+            Self::Xmas => write!(f, "XMAS (-sX)"),
+            Self::Ack => write!(f, "ACK (-sA)"),
+            Self::Window => write!(f, "Window (-sW)"),
+            Self::Maimon => write!(f, "Maimon (-sM)"),
         }
     }
 }

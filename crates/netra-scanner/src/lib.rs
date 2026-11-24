@@ -1,5 +1,7 @@
+pub mod nse;
 pub mod os_fingerprint;
 pub mod service_probe;
+pub mod traceroute;
 pub mod udp;
 
 use std::net::{IpAddr, SocketAddr};
@@ -12,8 +14,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
+pub use nse::NseEngine;
 pub use os_fingerprint::OsFingerprinter;
 pub use service_probe::{ServiceInfo, ServiceProbeEngine};
+pub use traceroute::TracerouteEngine;
 pub use udp::UdpScanner;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,5 +1,9 @@
+pub mod color;
+pub mod expert;
 pub mod stream;
 
+pub use color::ColorEngine;
+pub use expert::ExpertEngine;
 pub use stream::{StreamKey, StreamSegment, TcpStreamReassembler};
 
 use std::fmt::Write as FmtWrite;

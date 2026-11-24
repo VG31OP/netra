@@ -9,10 +9,11 @@ pub mod ssh;
 pub mod ssdp;
 pub mod tcp;
 pub mod tls;
+pub mod vlan;
 
 pub use arp::{ArpOperation, ArpPacket};
 pub use dhcp::{DhcpInfo, DhcpMessageType};
-pub use dns::DnsMessage;
+pub use dns::{DnsAnswer, DnsMessage, DnsRecordType};
 pub use http::HttpMetadata;
 pub use icmp::{IcmpInfo, IcmpType};
 pub use ntp::NtpMessage;
@@ -21,3 +22,4 @@ pub use ssh::SshBanner;
 pub use ssdp::SsdpMessage;
 pub use tcp::{TcpFlags, TcpSegmentDetails};
 pub use tls::TlsClientHello;
+pub use vlan::VlanHeader;
