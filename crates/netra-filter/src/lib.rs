@@ -25,11 +25,15 @@ pub enum FilterNode {
     TcpSyn,
     TcpReset,
     TcpFin,
+    TcpAck,
+    TcpPsh,
     FrameLen(ComparisonOp, u32),
+    FrameNumber(u64),
     HttpMethod(String),
     HttpStatus(u16),
     DnsName(String),
     TlsSni(String),
+    SummaryContains(String),
     And(Box<FilterNode>, Box<FilterNode>),
     Or(Box<FilterNode>, Box<FilterNode>),
     Not(Box<FilterNode>),
@@ -105,16 +109,22 @@ impl FilterNode {
             "icmp" => return FilterNode::Protocol(NetworkProtocol::Icmp),
             "dhcp" | "bootp" => return FilterNode::Protocol(NetworkProtocol::Dhcp),
             "ssdp" => return FilterNode::Protocol(NetworkProtocol::Ssdp),
+            "smb" => return FilterNode::Protocol(NetworkProtocol::Smb),
+            "ntp" => return FilterNode::Protocol(NetworkProtocol::Ntp),
+            "ssh" => return FilterNode::Protocol(NetworkProtocol::Ssh),
+            "mdns" => return FilterNode::Protocol(NetworkProtocol::Mdns),
             "ip" | "ipv4" => return FilterNode::Protocol(NetworkProtocol::Ipv4),
             "ipv6" => return FilterNode::Protocol(NetworkProtocol::Ipv6),
             "tcp.flags.syn" => return FilterNode::TcpSyn,
-            "tcp.flags.reset" => return FilterNode::TcpReset,
+            "tcp.flags.reset" | "tcp.flags.rst" => return FilterNode::TcpReset,
             "tcp.flags.fin" => return FilterNode::TcpFin,
+            "tcp.flags.ack" => return FilterNode::TcpAck,
+            "tcp.flags.push" | "tcp.flags.psh" => return FilterNode::TcpPsh,
             _ => {}
         }
 
         // Wireshark style field comparisons
-        if let Some((field, val)) = Self::split_op(pred) {
+        if let Some((field, op, val)) = Self::split_op_with_op(pred) {
             let f = field.trim().to_lowercase();
             let v = val.trim().trim_matches('"').trim_matches('\'');
 
@@ -128,10 +138,10 @@ impl FilterNode {
                 "ip.addr" | "host" => {
                     if let Ok(ip) = v.parse::<IpAddr>() { return FilterNode::IpAddrMatch(ip); }
                 }
-                "tcp.port" => {
+                "tcp.port" | "tcp.srcport" | "tcp.dstport" => {
                     if let Ok(port) = v.parse::<u16>() { return FilterNode::TcpPort(port); }
                 }
-                "udp.port" => {
+                "udp.port" | "udp.srcport" | "udp.dstport" => {
                     if let Ok(port) = v.parse::<u16>() { return FilterNode::UdpPort(port); }
                 }
                 "port" => {
@@ -139,16 +149,24 @@ impl FilterNode {
                 }
                 "frame.len" => {
                     if let Ok(len) = v.parse::<u32>() {
-                        return FilterNode::FrameLen(ComparisonOp::GreaterThan, len);
+                        return FilterNode::FrameLen(op, len);
+                    }
+                }
+                "frame.number" => {
+                    if let Ok(idx) = v.parse::<u64>() {
+                        return FilterNode::FrameNumber(idx);
                     }
                 }
                 "http.request.method" => return FilterNode::HttpMethod(v.to_uppercase()),
                 "http.response.code" => {
                     if let Ok(code) = v.parse::<u16>() { return FilterNode::HttpStatus(code); }
                 }
-                "dns.qry.name" => return FilterNode::DnsName(v.to_string()),
+                "dns.qry.name" | "dns.resp.name" => return FilterNode::DnsName(v.to_string()),
                 "tls.handshake.extensions_server_name" | "tls.sni" => {
                     return FilterNode::TlsSni(v.to_string());
+                }
+                "contains" | "text" | "frame" => {
+                    return FilterNode::SummaryContains(v.to_string());
                 }
                 _ => {}
             }
@@ -160,14 +178,25 @@ impl FilterNode {
         } else if let Ok(port) = pred.trim().parse::<u16>() {
             FilterNode::Port(port)
         } else {
-            FilterNode::All
+            FilterNode::SummaryContains(pred.trim().to_string())
         }
     }
 
-    fn split_op(text: &str) -> Option<(&str, &str)> {
-        for op in &["==", "!=", ">=", "<=", " contains ", "=", ">", "<"] {
-            if let Some(pos) = text.find(op) {
-                return Some((&text[..pos], &text[pos + op.len()..]));
+    fn split_op_with_op(text: &str) -> Option<(&str, ComparisonOp, &str)> {
+        let ops = [
+            ("==", ComparisonOp::Equal),
+            ("!=", ComparisonOp::NotEqual),
+            (">=", ComparisonOp::GreaterOrEqual),
+            ("<=", ComparisonOp::LessOrEqual),
+            (" contains ", ComparisonOp::Contains),
+            ("=", ComparisonOp::Equal),
+            (">", ComparisonOp::GreaterThan),
+            ("<", ComparisonOp::LessThan),
+        ];
+
+        for (sym, op) in ops {
+            if let Some(pos) = text.find(sym) {
+                return Some((&text[..pos], op, &text[pos + sym.len()..]));
             }
         }
         None
@@ -196,6 +225,8 @@ impl FilterNode {
             Self::TcpSyn => packet.flags.as_ref().map(|f| f.syn).unwrap_or(false),
             Self::TcpReset => packet.flags.as_ref().map(|f| f.rst).unwrap_or(false),
             Self::TcpFin => packet.flags.as_ref().map(|f| f.fin).unwrap_or(false),
+            Self::TcpAck => packet.flags.as_ref().map(|f| f.ack).unwrap_or(false),
+            Self::TcpPsh => packet.flags.as_ref().map(|f| f.psh).unwrap_or(false),
             Self::FrameLen(op, val) => match op {
                 ComparisonOp::GreaterThan => packet.length > *val,
                 ComparisonOp::LessThan => packet.length < *val,
@@ -205,10 +236,12 @@ impl FilterNode {
                 ComparisonOp::NotEqual => packet.length != *val,
                 ComparisonOp::Contains => false,
             },
+            Self::FrameNumber(idx) => packet.index == *idx,
             Self::HttpMethod(m) => packet.http_method.as_ref().map(|x| x == m).unwrap_or(false),
             Self::HttpStatus(code) => packet.http_status == Some(*code),
             Self::DnsName(q) => packet.dns_name.as_ref().map(|x| x.contains(q)).unwrap_or(false),
             Self::TlsSni(s) => packet.sni.as_ref().map(|x| x.contains(s)).unwrap_or(false),
+            Self::SummaryContains(s) => packet.summary.to_lowercase().contains(&s.to_lowercase()),
             Self::And(l, r) => l.matches(packet) && r.matches(packet),
             Self::Or(l, r) => l.matches(packet) || r.matches(packet),
             Self::Not(inner) => !inner.matches(packet),

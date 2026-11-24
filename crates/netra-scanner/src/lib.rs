@@ -1,12 +1,26 @@
+pub mod os_fingerprint;
+pub mod service_probe;
+pub mod udp;
+
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use chrono::Utc;
-use netra_common::{NetraError, PortState, Result, ServiceRecord};
+use netra_common::{NetraError, OsMatch, PortState, Result, ServiceRecord};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
+
+pub use os_fingerprint::OsFingerprinter;
+pub use service_probe::{ServiceInfo, ServiceProbeEngine};
+pub use udp::UdpScanner;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanTechnique {
+    TcpConnect,
+    Udp,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimingTemplate {
@@ -56,10 +70,34 @@ impl PortPresets {
         49152, 49153, 49154, 49155, 49156, 49157,
     ];
 
+    pub fn top_1000() -> Vec<u16> {
+        let mut ports = Vec::with_capacity(1000);
+        // Standard system/privileged range
+        for p in 1..=850 {
+            ports.push(p);
+        }
+        // Most common registered/high services
+        let high_common: &[u16] = &[
+            873, 902, 990, 993, 995, 1025, 1026, 1080, 1194, 1433, 1521, 1723, 1883, 2049, 2082,
+            2083, 2086, 2087, 2181, 2222, 2375, 2376, 3000, 3128, 3306, 3389, 4243, 4443, 5000,
+            5060, 5432, 5672, 5900, 6000, 6379, 6443, 7001, 8000, 8008, 8080, 8081, 8443, 8888,
+            9000, 9090, 9092, 9200, 9418, 9999, 10000, 11211, 27017, 50000,
+        ];
+        ports.extend_from_slice(high_common);
+        ports.sort_unstable();
+        ports.dedup();
+        ports.truncate(1000);
+        ports
+    }
+
     pub fn parse_port_expression(expr: &str) -> Result<Vec<u16>> {
         let trimmed = expr.trim();
-        if trimmed.is_empty() {
+        if trimmed.is_empty() || trimmed == "top-100" {
             return Ok(Self::TOP_100.to_vec());
+        }
+
+        if trimmed == "top-1000" || trimmed == "default" {
+            return Ok(Self::top_1000());
         }
 
         if trimmed == "-F" || trimmed == "fast" {
@@ -88,6 +126,13 @@ impl PortPresets {
         ports.dedup();
         Ok(ports)
     }
+}
+
+pub struct ScanReport {
+    pub target: IpAddr,
+    pub open_ports: Vec<ServiceRecord>,
+    pub os_match: OsMatch,
+    pub scan_duration: Duration,
 }
 
 pub struct PortScanner {
@@ -128,12 +173,15 @@ impl PortScanner {
         match timeout(self.timeout, TcpStream::connect(&addr)).await {
             Ok(Ok(stream)) => {
                 let banner = Self::probe_service(stream, port).await;
-                let service_name = Self::identify_service(port, banner.as_deref());
+                let info = ServiceProbeEngine::analyze_banner(port, banner.as_deref());
                 ServiceRecord {
                     port,
                     protocol: "tcp".to_string(),
                     state: PortState::Open,
-                    service_name: Some(service_name),
+                    service_name: Some(info.name),
+                    product: info.product,
+                    version: info.version,
+                    extra_info: info.extra_info,
                     banner,
                     last_observed: Utc::now(),
                 }
@@ -143,6 +191,9 @@ impl PortScanner {
                 protocol: "tcp".to_string(),
                 state: PortState::Closed,
                 service_name: None,
+                product: None,
+                version: None,
+                extra_info: None,
                 banner: None,
                 last_observed: start,
             },
@@ -151,6 +202,9 @@ impl PortScanner {
                 protocol: "tcp".to_string(),
                 state: PortState::Filtered,
                 service_name: None,
+                product: None,
+                version: None,
+                extra_info: None,
                 banner: None,
                 last_observed: start,
             },
@@ -158,7 +212,7 @@ impl PortScanner {
     }
 
     async fn probe_service(mut stream: TcpStream, port: u16) -> Option<String> {
-        let mut buf = [0u8; 1024];
+        let mut buf = [0u8; 2048];
 
         // 1. Passive banner read (FTP, SSH, SMTP send greeting automatically)
         if let Ok(Ok(n)) = timeout(Duration::from_millis(400), stream.read(&mut buf)).await {
@@ -167,17 +221,10 @@ impl PortScanner {
             }
         }
 
-        // 2. Active probe based on port heuristics
-        let probe: Option<&[u8]> = match port {
-            80 | 8080 | 8000 | 8888 => Some(b"HEAD / HTTP/1.0\r\n\r\n"),
-            443 | 8443 => None, // TLS handshake handled separately
-            6379 => Some(b"PING\r\n"),
-            _ => Some(b"\r\n\r\n"),
-        };
-
-        if let Some(data) = probe {
-            if stream.write_all(data).await.is_ok() {
-                if let Ok(Ok(n)) = timeout(Duration::from_millis(500), stream.read(&mut buf)).await {
+        // 2. Active probe payload
+        if let Some(payload) = ServiceProbeEngine::probe_payload(port) {
+            if stream.write_all(payload).await.is_ok() {
+                if let Ok(Ok(n)) = timeout(Duration::from_millis(600), stream.read(&mut buf)).await {
                     if n > 0 {
                         let text = String::from_utf8_lossy(&buf[..n]).trim().to_string();
                         return Some(text);
@@ -187,48 +234,6 @@ impl PortScanner {
         }
 
         None
-    }
-
-    pub fn identify_service(port: u16, banner: Option<&str>) -> String {
-        if let Some(b) = banner {
-            let lower = b.to_lowercase();
-            if lower.contains("ssh") { return "ssh".to_string(); }
-            if lower.contains("http") || lower.contains("server:") { return "http".to_string(); }
-            if lower.contains("ftp") { return "ftp".to_string(); }
-            if lower.contains("smtp") || lower.contains("esmtp") { return "smtp".to_string(); }
-            if lower.contains("mysql") || lower.contains("mariadb") { return "mysql".to_string(); }
-            if lower.contains("redis") || lower.contains("pong") { return "redis".to_string(); }
-            if lower.contains("rfb") { return "vnc".to_string(); }
-        }
-
-        match port {
-            21 => "ftp",
-            22 => "ssh",
-            23 => "telnet",
-            25 => "smtp",
-            53 => "dns",
-            80 => "http",
-            110 => "pop3",
-            135 => "msrpc",
-            139 => "netbios-ssn",
-            143 => "imap",
-            443 => "https",
-            445 => "microsoft-ds",
-            1433 => "ms-sql-s",
-            1521 => "oracle",
-            3306 => "mysql",
-            3389 => "ms-wbt-server",
-            5432 => "postgresql",
-            5900 => "vnc",
-            6379 => "redis",
-            8000 => "http-alt",
-            8080 => "http-proxy",
-            8443 => "https-alt",
-            9092 => "kafka",
-            27017 => "mongodb",
-            _ => "unknown",
-        }
-        .to_string()
     }
 
     pub async fn scan_ports<F: Fn(ServiceRecord) + Send + Sync + 'static>(
@@ -253,10 +258,10 @@ impl PortScanner {
                 tokio::time::sleep(d).await;
             }
 
-            let permit = sem.clone().acquire_owned().await;
-            if permit.is_err() {
-                break;
-            }
+            let permit = match sem.clone().acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => break,
+            };
 
             let on_res = on_result.clone();
             handles.push(tokio::spawn(async move {
@@ -265,12 +270,15 @@ impl PortScanner {
                 let record = match timeout(timeout_dur, TcpStream::connect(&addr)).await {
                     Ok(Ok(stream)) => {
                         let banner = Self::probe_service(stream, port).await;
-                        let service_name = Self::identify_service(port, banner.as_deref());
+                        let info = ServiceProbeEngine::analyze_banner(port, banner.as_deref());
                         ServiceRecord {
                             port,
                             protocol: "tcp".to_string(),
                             state: PortState::Open,
-                            service_name: Some(service_name),
+                            service_name: Some(info.name),
+                            product: info.product,
+                            version: info.version,
+                            extra_info: info.extra_info,
                             banner,
                             last_observed: Utc::now(),
                         }
@@ -280,6 +288,9 @@ impl PortScanner {
                         protocol: "tcp".to_string(),
                         state: PortState::Closed,
                         service_name: None,
+                        product: None,
+                        version: None,
+                        extra_info: None,
                         banner: None,
                         last_observed: Utc::now(),
                     },
@@ -288,6 +299,9 @@ impl PortScanner {
                         protocol: "tcp".to_string(),
                         state: PortState::Filtered,
                         service_name: None,
+                        product: None,
+                        version: None,
+                        extra_info: None,
                         banner: None,
                         last_observed: Utc::now(),
                     },

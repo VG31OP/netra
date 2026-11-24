@@ -175,6 +175,8 @@ impl StorageEngine {
                     ip,
                     mac,
                     hostname,
+                    device_type: None,
+                    os_match: None,
                     first_seen,
                     last_seen,
                     services: Vec::new(),
@@ -213,6 +215,9 @@ impl StorageEngine {
                         protocol,
                         state,
                         service_name,
+                        product: None,
+                        version: None,
+                        extra_info: None,
                         banner,
                         last_observed,
                     })
@@ -244,6 +249,9 @@ mod tests {
             protocol: "tcp".to_string(),
             state: PortState::Open,
             service_name: Some("http".to_string()),
+            product: None,
+            version: None,
+            extra_info: None,
             banner: Some("Apache/2.4".to_string()),
             last_observed: Utc::now(),
         });

@@ -1,12 +1,17 @@
+pub mod stream;
+
+pub use stream::{StreamKey, StreamSegment, TcpStreamReassembler};
+
 use std::fmt::Write as FmtWrite;
 use std::fs::File;
 use std::net::IpAddr;
 use std::path::Path;
 use chrono::{DateTime, TimeZone, Utc};
 use etherparse::{SlicedPacket, TransportSlice};
-use netra_common::{MacAddress, NetworkProtocol, PacketFlags, PacketMetadata, NetraError, Result};
+use netra_common::{MacAddress, NetraError, NetworkProtocol, PacketFlags, PacketMetadata, Result};
 use netra_protocols::{
-    ArpPacket, DhcpInfo, DnsMessage, HttpMetadata, IcmpInfo, SsdpMessage, TcpSegmentDetails, TlsClientHello,
+    ArpPacket, DhcpInfo, DnsMessage, HttpMetadata, IcmpInfo, NtpMessage, SmbMessage, SshBanner,
+    SsdpMessage, TcpSegmentDetails, TlsClientHello,
 };
 use pcap_file::pcap::PcapReader;
 use pcap_file::pcapng::PcapNgReader;
@@ -184,6 +189,13 @@ impl PacketParser {
                         } else if let Some(code) = http.status_code {
                             summary = format!("HTTP Response {}", code);
                         }
+                    } else if let Some(ssh) = SshBanner::parse(payload) {
+                        protocol = NetworkProtocol::Ssh;
+                        summary = format!("SSH-{} ({})", ssh.proto_version, ssh.software_version);
+                    } else if let Some(smb) = SmbMessage::parse(payload) {
+                        protocol = NetworkProtocol::Smb;
+                        let dir = if smb.is_response { "Response" } else { "Request" };
+                        summary = format!("SMBv{} {}: {}", smb.version, dir, smb.command_name);
                     } else {
                         summary = format!("TCP: {} -> {} {} seq={}",
                             tcp.source_port(),
@@ -212,6 +224,23 @@ impl PacketParser {
                             summary = format!("DNS {} for {}", role, names);
                         } else {
                             summary = "DNS Packet".to_string();
+                        }
+                    } else if udp.source_port() == 5353 || udp.destination_port() == 5353 {
+                        protocol = NetworkProtocol::Mdns;
+                        if let Ok(dns) = DnsMessage::parse(payload) {
+                            let role = if dns.is_response { "Response" } else { "Query" };
+                            let names = dns.query_names.join(", ");
+                            summary = format!("mDNS {} for {}", role, if names.is_empty() { "services" } else { &names });
+                        } else {
+                            summary = "mDNS Packet".to_string();
+                        }
+                    } else if udp.source_port() == 123 || udp.destination_port() == 123 {
+                        if let Some(ntp) = NtpMessage::parse(payload) {
+                            protocol = NetworkProtocol::Ntp;
+                            summary = format!("NTP: {} (v{}, stratum {})", ntp.mode_name, ntp.version, ntp.stratum);
+                        } else {
+                            protocol = NetworkProtocol::Ntp;
+                            summary = "NTP Packet".to_string();
                         }
                     } else if udp.source_port() == 67 || udp.destination_port() == 67 || udp.source_port() == 68 || udp.destination_port() == 68 {
                         if let Ok(dhcp) = DhcpInfo::parse(payload) {
@@ -360,6 +389,90 @@ impl PacketParser {
                     _ => {}
                 }
             }
+
+            // Layer 5: Application Layer
+            if let Some(transport) = &sliced.transport {
+                let payload = match transport {
+                    TransportSlice::Tcp(tcp) => tcp.payload(),
+                    TransportSlice::Udp(udp) => udp.payload(),
+                    _ => &[],
+                };
+
+                if !payload.is_empty() {
+                    if let Ok(dns) = DnsMessage::parse(payload) {
+                        layers.push(DissectedLayer {
+                            name: "Domain Name System (DNS)".to_string(),
+                            fields: vec![
+                                ("Transaction ID".to_string(), format!("{:#06x}", dns.transaction_id)),
+                                ("Type".to_string(), if dns.is_response { "Response".to_string() } else { "Query".to_string() }),
+                                ("Query Count".to_string(), dns.query_names.len().to_string()),
+                                ("Query Names".to_string(), dns.query_names.join(", ")),
+                            ],
+                        });
+                    } else if let Ok(http) = HttpMetadata::parse(payload) {
+                        let mut fields = Vec::new();
+                        if let Some(m) = http.method { fields.push(("Request Method".to_string(), m)); }
+                        if let Some(u) = http.uri { fields.push(("Request URI".to_string(), u)); }
+                        if let Some(h) = http.host { fields.push(("Host".to_string(), h)); }
+                        if let Some(ua) = http.user_agent { fields.push(("User-Agent".to_string(), ua)); }
+                        if let Some(c) = http.status_code { fields.push(("Status Code".to_string(), c.to_string())); }
+                        layers.push(DissectedLayer {
+                            name: "Hypertext Transfer Protocol (HTTP)".to_string(),
+                            fields,
+                        });
+                    } else if let Ok(tls) = TlsClientHello::parse(payload) {
+                        let mut fields = vec![
+                            ("Handshake Type".to_string(), "Client Hello (1)".to_string()),
+                            ("Version".to_string(), format!("{:#06x}", tls.version)),
+                        ];
+                        if let Some(sni) = tls.server_name {
+                            fields.push(("Server Name Indication (SNI)".to_string(), sni));
+                        }
+                        layers.push(DissectedLayer {
+                            name: "Transport Layer Security (TLS)".to_string(),
+                            fields,
+                        });
+                    } else if let Some(ssh) = SshBanner::parse(payload) {
+                        layers.push(DissectedLayer {
+                            name: "Secure Shell (SSH)".to_string(),
+                            fields: vec![
+                                ("Protocol Version".to_string(), ssh.proto_version),
+                                ("Software Version".to_string(), ssh.software_version),
+                                ("Comments".to_string(), ssh.comments.unwrap_or_else(|| "-".to_string())),
+                            ],
+                        });
+                    } else if let Some(smb) = SmbMessage::parse(payload) {
+                        layers.push(DissectedLayer {
+                            name: format!("Server Message Block (SMBv{})", smb.version),
+                            fields: vec![
+                                ("Command".to_string(), format!("{} ({:#06x})", smb.command_name, smb.command)),
+                                ("Direction".to_string(), if smb.is_response { "Response" } else { "Request" }.to_string()),
+                                ("NT Status".to_string(), format!("{:#010x}", smb.status)),
+                            ],
+                        });
+                    } else if let Some(ntp) = NtpMessage::parse(payload) {
+                        layers.push(DissectedLayer {
+                            name: "Network Time Protocol (NTP)".to_string(),
+                            fields: vec![
+                                ("Mode".to_string(), ntp.mode_name),
+                                ("Version".to_string(), ntp.version.to_string()),
+                                ("Stratum".to_string(), ntp.stratum.to_string()),
+                                ("Leap Indicator".to_string(), ntp.leap_indicator.to_string()),
+                                ("Precision".to_string(), format!("2^{} seconds", ntp.precision)),
+                            ],
+                        });
+                    } else if let Ok(dhcp) = DhcpInfo::parse(payload) {
+                        layers.push(DissectedLayer {
+                            name: "Dynamic Host Configuration Protocol (DHCP)".to_string(),
+                            fields: vec![
+                                ("Message Type".to_string(), format!("{:?}", dhcp.message_type)),
+                                ("Transaction ID".to_string(), format!("{:#010x}", dhcp.transaction_id)),
+                                ("Client MAC".to_string(), dhcp.client_mac.to_string()),
+                            ],
+                        });
+                    }
+                }
+            }
         }
 
         PacketTree {
@@ -470,5 +583,27 @@ impl CaptureFileReader {
             }
         }
         Ok(None)
+    }
+
+    pub fn read_packets_streaming<P: AsRef<Path>, F: FnMut(u64, &[u8]) -> bool>(
+        path: P,
+        mut on_raw: F,
+    ) -> Result<u64> {
+        let path_ref = path.as_ref();
+        let file = File::open(path_ref)?;
+        let mut index = 0u64;
+
+        let mut reader = PcapReader::new(file)
+            .map_err(|e| NetraError::Parser(format!("Failed to open PCAP: {}", e)))?;
+
+        while let Some(packet_res) = reader.next_packet() {
+            if let Ok(pkt) = packet_res {
+                index += 1;
+                if !on_raw(index, &pkt.data) {
+                    break;
+                }
+            }
+        }
+        Ok(index)
     }
 }

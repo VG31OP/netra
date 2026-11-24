@@ -77,6 +77,10 @@ pub enum NetworkProtocol {
     Tls,
     Dhcp,
     Ssdp,
+    Smb,
+    Ntp,
+    Mdns,
+    Ssh,
     Unknown(String),
 }
 
@@ -95,6 +99,10 @@ impl fmt::Display for NetworkProtocol {
             Self::Tls => write!(f, "TLS"),
             Self::Dhcp => write!(f, "DHCP"),
             Self::Ssdp => write!(f, "SSDP"),
+            Self::Smb => write!(f, "SMB"),
+            Self::Ntp => write!(f, "NTP"),
+            Self::Mdns => write!(f, "mDNS"),
+            Self::Ssh => write!(f, "SSH"),
             Self::Unknown(name) => write!(f, "{}", name),
         }
     }
@@ -149,13 +157,40 @@ impl fmt::Display for PortState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OsMatch {
+    pub name: String,
+    pub accuracy: u8,
+    pub family: String,
+    pub cpe: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServiceRecord {
     pub port: u16,
     pub protocol: String,
     pub state: PortState,
     pub service_name: Option<String>,
+    pub product: Option<String>,
+    pub version: Option<String>,
+    pub extra_info: Option<String>,
     pub banner: Option<String>,
     pub last_observed: DateTime<Utc>,
+}
+
+impl ServiceRecord {
+    pub fn simple(port: u16, protocol: impl Into<String>, state: PortState) -> Self {
+        Self {
+            port,
+            protocol: protocol.into(),
+            state,
+            service_name: None,
+            product: None,
+            version: None,
+            extra_info: None,
+            banner: None,
+            last_observed: Utc::now(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -163,6 +198,8 @@ pub struct HostRecord {
     pub ip: IpAddr,
     pub mac: Option<MacAddress>,
     pub hostname: Option<String>,
+    pub device_type: Option<String>,
+    pub os_match: Option<OsMatch>,
     pub first_seen: DateTime<Utc>,
     pub last_seen: DateTime<Utc>,
     pub services: Vec<ServiceRecord>,
@@ -176,6 +213,8 @@ impl HostRecord {
             ip,
             mac: None,
             hostname: None,
+            device_type: None,
+            os_match: None,
             first_seen: now,
             last_seen: now,
             services: Vec::new(),

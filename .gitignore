@@ -20,3 +20,8 @@ portable.flag
 .vscode/
 *.sublime-project
 *.sublime-workspace
+
+# Build distribution and packages
+/dist/
+*.zip
+crates/netra-core/sample_capture.pcap

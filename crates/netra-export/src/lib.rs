@@ -69,6 +69,9 @@ mod tests {
             protocol: "udp".to_string(),
             state: netra_common::PortState::Open,
             service_name: Some("dns".to_string()),
+            product: None,
+            version: None,
+            extra_info: None,
             banner: None,
             last_observed: chrono::Utc::now(),
         });

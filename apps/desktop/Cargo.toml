@@ -14,7 +14,11 @@ netra-common = { path = "../../crates/netra-common" }
 netra-config = { path = "../../crates/netra-config" }
 netra-storage = { path = "../../crates/netra-storage" }
 netra-core = { path = "../../crates/netra-core" }
+netra-scanner = { path = "../../crates/netra-scanner" }
+netra-parser = { path = "../../crates/netra-parser" }
+netra-discovery = { path = "../../crates/netra-discovery" }
 slint = "1.19.1"
+chrono.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

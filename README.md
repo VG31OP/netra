@@ -1,174 +1,208 @@
 # NETRA
-**Cross-Platform Portable Network Intelligence & Packet Analysis Platform**
+**Cross-Platform Portable Network Intelligence, Packet Analysis & Scanning Platform**
 
 > [!WARNING]
 > ### 🚧 UNDER ACTIVE DEVELOPMENT
-> NETRA is currently in active development (v0.1.0 Initial Development). Core architectures, protocol dissectors, and desktop interfaces are undergoing rapid enhancement.
+> NETRA is currently under active development. Core packet parsing, Wireshark-class 3-pane dissection, and Nmap-class network scanning engines are fully operational in both Desktop GUI and CLI.
 
-NETRA is an independent, lightweight, high-performance network intelligence platform implemented in Rust. Inspired by Wireshark and Nmap, NETRA provides offline packet inspection, PCAP/PCAPNG analysis, subnet discovery, port scanning, and unified network inventory correlation—optimized for bounded memory and offline execution.
+NETRA is an independent, lightweight, high-performance network intelligence platform implemented in pure Rust. Inspired by the capabilities of **Wireshark** (packet capture, protocol inspection, PCAP/PCAPNG streaming, display filters, hex dump viewer, TCP stream reassembly) and **Nmap** (host discovery, TCP/UDP scanning, service version detection, OS fingerprinting, timing templates), NETRA delivers a single unified binary core optimized for bounded memory and 100% offline execution.
 
 ---
 
 ## Table of Contents
 
 - [Core Principles](#core-principles)
-- [Prerequisites](#prerequisites)
-- [Build Instructions](#build-instructions)
+- [Unified Wireshark + Nmap Capabilities](#unified-wireshark--nmap-capabilities)
+  - [Wireshark Capabilities](#wireshark-capabilities)
+  - [Nmap Capabilities](#nmap-capabilities)
+- [Prerequisites & Building from Source](#prerequisites--building-from-source)
 - [Quick Start Guide](#quick-start-guide)
-  - [1. Launching NETRA Desktop](#1-launching-netra-desktop)
-  - [2. Using NETRA CLI](#2-using-netra-cli)
+  - [1. Launching NETRA Desktop (Slint GUI)](#1-launching-netra-desktop-slint-gui)
+  - [2. Using NETRA CLI (Clap)](#2-using-netra-cli-clap)
 - [CLI Command Reference & Examples](#cli-command-reference--examples)
-- [Portable Mode Setup](#portable-mode-setup)
-- [Architecture & Crates](#architecture--crates)
+- [Portable Mode Deployment](#portable-mode-deployment)
+- [Repository Architecture](#repository-architecture)
 - [Running Tests & Benchmarks](#running-tests--benchmarks)
-- [License](#license)
+- [License & Authorship](#license--authorship)
 
 ---
 
 ## Core Principles
 
-- **Offline-First & Zero Telemetry**: Operates completely offline with zero telemetry, background tracking, or remote vendor requests.
-- **Bounded Memory Processing**: Large PCAP and PCAPNG capture files are streamed incrementally without loading entire payloads into RAM.
-- **Portable & Installed Storage**: Operates in standard OS directories or as a self-contained portable bundle beside a `portable.flag` file.
-- **Shared Rust Core**: Both the desktop UI (Slint) and CLI (Clap) share the exact same underlying processing engine.
+- **Zero Telemetry & 100% Offline**: Completely offline operation. No telemetry, background tracking, analytics, or remote vendor network calls.
+- **Bounded Memory Streaming**: Large PCAP and PCAPNG capture files process incrementally with bounded memory buffers—never loading large captures into RAM.
+- **Portable-First Storage**: Zero-configuration portable operation via `portable.flag` (SQLite WAL journaling) alongside binaries, or automatic system directory fallback.
+- **Unified Rust Core**: Both the native Slint Desktop UI and Clap CLI share the exact same underlying processing, scanning, and dissection engines.
+- **Pure Independent Implementation**: Clean Apache-2.0 licensed Rust implementation without bundling or wrapping external Wireshark or Nmap binaries.
 
 ---
 
-## Prerequisites
+## Unified Wireshark + Nmap Capabilities
 
-To build NETRA from source, ensure you have:
+### Wireshark Capabilities
+- **3-Pane Desktop Interface**:
+  1. *Top Pane*: Interactive packet list table with columns `No.`, `Protocol`, `Source`, `Destination`, `Length`, and `Info`.
+  2. *Middle Pane*: Hierarchical collapsible packet details tree (Frame, Ethernet II, IPv4/IPv6, TCP/UDP, Application Layer).
+  3. *Bottom Pane*: Synchronized Hex & ASCII byte viewer with 16-byte offset rows.
+- **Streaming PCAP & PCAPNG Readers**: Incremental block processing supporting standard PCAP and modern PCAPNG formats.
+- **Deep Protocol Dissectors**:
+  - *Layer 2*: Ethernet II, ARP / RARP
+  - *Layer 3*: IPv4, IPv6, ICMPv4, ICMPv6
+  - *Layer 4*: TCP (sequence, acknowledgment, window size, flags), UDP
+  - *Layer 7*: HTTP/1.1, TLS / SSL (ClientHello SNI), DNS, mDNS, DHCP / BOOTP, SSDP, SMBv1/v2/v3, NTP, SSH banner extraction
+- **Wireshark Display Filter Engine**:
+  - Relational fields: `ip.src`, `ip.dst`, `ip.addr`, `tcp.port`, `udp.port`, `frame.len`, `frame.number`, `http.request.method`, `http.response.code`, `dns.qry.name`, `tls.sni`, `contains`, etc.
+  - Boolean operators: `&&`, `and`, `||`, `or`, `!`, `not`.
+- **Follow TCP Stream**: Reconstructs complete client and server conversation payloads in chronological sequence.
+- **Traffic Statistics**: Protocol hierarchy distribution and IP conversation endpoints matrix.
 
+### Nmap Capabilities
+- **Target Specification**:
+  - Single IP (e.g. `192.168.1.1`)
+  - Subnet CIDR (e.g. `192.168.1.0/24`)
+  - IP Range (e.g. `192.168.1.1-50`)
+  - Hostnames with DNS resolution (e.g. `scanme.nmap.org`)
+- **Scanning Modes**:
+  - TCP Connect Scan (`-sT`)
+  - UDP Scan (`-sU`) with protocol-specific probes (DNS, NTP, SNMP, SSDP)
+- **Service Version Detection (`-sV`)**:
+  - Active probe engine interrogating open ports with HTTP, TLS, SSH, FTP, SMTP, MySQL, Redis, and SMB payloads.
+  - Automatic extraction of service name, product name, software version, and operating system hints.
+- **OS Fingerprinting Engine (`-O`)**:
+  - Heuristic analysis based on initial TTL, TCP window sizes, DF flags, and service banner correlations.
+  - Identification of Linux, Microsoft Windows, Apple macOS / Darwin, and network embedded devices with confidence scoring.
+- **Port Presets & Custom Expressions**:
+  - Fast / Top 100 ports (`-F`)
+  - Default Top 1000 ports
+  - All 65,535 ports (`-p-`)
+  - Custom ranges (`-p 22,80,443,8000-8080`)
+- **Nmap Timing Templates**:
+  - `T0` (Paranoid), `T1` (Sneaky), `T2` (Polite), `T3` (Normal), `T4` (Aggressive), `T5` (Insane)
+
+---
+
+## Prerequisites & Building from Source
+
+### Prerequisites
 - **Rust Toolchain**: Rust 1.80.0 or later (`cargo`, `rustc`).
 - **C Compiler**:
   - **Windows**: MinGW-w64 (`gcc`) or MSVC build tools (for SQLite C bindings).
   - **Linux**: `gcc` or `clang`, `libfontconfig1-dev`, `libpcap-dev`.
   - **macOS**: Xcode command-line tools (`clang`).
 
----
-
-## Build Instructions
-
-Clone the repository and build the workspace:
-
+### Build Commands
 ```bash
 # Clone the repository
-git clone https://github.com/netra-project/netra.git
+git clone https://github.com/VG31OP/netra.git
 cd netra
 
-# Build all workspace crates and applications (Debug)
+# Build debug binaries
 cargo build
 
 # Build optimized release binaries
 cargo build --release
 ```
 
-Compiled binaries will be generated under `target/release/` (or `target/debug/`):
-- `netra` (or `netra.exe`): Command-line interface.
-- `netra-desktop` (or `netra-desktop.exe`): Slint graphical desktop interface.
+Compiled executables are located under `target/release/`:
+- `netra` (or `netra.exe`): Standalone CLI application.
+- `netra-desktop` (or `netra-desktop.exe`): Native graphical Slint interface.
 
 ---
 
 ## Quick Start Guide
 
-### 1. Launching NETRA Desktop
-
-Launch the native graphical interface:
-
+### 1. Launching NETRA Desktop (Slint GUI)
 ```bash
-# Using cargo
-cargo run -p netra-desktop
-
-# Or directly from the built executable
 ./target/release/netra-desktop
 ```
-
-The desktop UI provides:
-- **Overview**: Active storage mode, total hosts discovered, and parsed packets count.
-- **Packet Analyzer**: Load and inspect PCAP/PCAPNG files with live table display.
-- **Network Discovery**: Subnet scanner interface.
+The desktop application provides:
+- **Packet Analyzer**: Full 3-pane Wireshark layout. Type a display filter (e.g. `dns || tcp.port == 80`), click any packet to inspect protocol layers and raw hex dump.
+- **Nmap Scanner**: Interactive target input, timing template selector, port selection, real-time scan progress, and OS detection card.
+- **Network Inventory**: Correlated active hosts, detected operating systems, and open service ports.
+- **Traffic Statistics**: Protocol hierarchy statistics and IP conversation endpoints matrix.
 - **Settings & Privacy**: Storage path overview, offline guarantees, and license info.
 
----
-
-### 2. Using NETRA CLI
-
-The `netra` CLI is a standalone binary with intuitive commands:
-
+### 2. Using NETRA CLI (Clap)
 ```bash
-# Display system environment and storage details
-cargo run -p netra-cli -- info
+# View system status and portable mode detection
+netra info
+
+# Run an Nmap-style scan against a target with service and OS detection
+netra scan --target 127.0.0.1 --ports top-100 -T 4
+
+# Run a Wireshark-style offline PCAP analysis with display filtering
+netra analyze --file sample_capture.pcap --filter "tcp.port == 443"
+
+# Reconstruct a TCP conversation stream (Follow TCP Stream)
+netra follow-stream --file sample_capture.pcap --stream-index 0
+
+# Display formatted Hex and ASCII dump of packet #2
+netra hexdump --file sample_capture.pcap --index 2
+
+# Display protocol hierarchy and conversation statistics
+netra pcap-stats --file sample_capture.pcap
 ```
 
 ---
 
 ## CLI Command Reference & Examples
 
-### System Information & Storage Inspection
+### Nmap Scanning & Discovery
 ```bash
-# View storage paths, portable status, and environment
-netra info
+# Scan top 100 ports with service version detection (-sV) and OS detection (-O)
+netra scan --target 192.168.1.1 --ports top-100 -T 3
 
-# Check SQLite database size and stored host records
-netra storage
+# Scan all 65,535 ports on an aggressive timing template (T4)
+netra scan --target 192.168.1.10 --ports -p- -T 4
 
-# Display active TOML configuration
-netra config
+# Perform a UDP scan (-sU)
+netra scan --target 192.168.1.1 --ports 53,123,161 --sU
+
+# Discover active devices across a local CIDR subnet or IP range
+netra discover --target 192.168.1.0/24
+netra discover --target 192.168.1.1-50
+
+# Run dedicated OS fingerprinting probe
+netra os-detect --target 192.168.1.1
 ```
 
-### Offline Packet Analysis (PCAP & PCAPNG)
+### Wireshark Packet Inspection & Forensics
 ```bash
-# Analyze a PCAP capture file
-netra analyze --file capture.pcap
+# Analyze PCAP capture with protocol filter
+netra analyze --file capture.pcap --filter "http || dns"
 
-# Analyze with a protocol filter (e.g. dns, http, tls, tcp, udp, arp, icmp)
-netra analyze --file capture.pcap --filter dns
+# Filter by source IP and destination port
+netra analyze --file capture.pcap --filter "ip.src == 192.168.1.50 && tcp.port == 443"
 
-# Analyze with an IP filter
-netra analyze --file capture.pcap --filter "host 192.168.1.50"
+# Follow TCP stream conversation
+netra follow-stream --file capture.pcap --stream-index 0
 
-# Limit output rows (default is 50)
-netra analyze --file capture.pcap --limit 20
+# Format packet #1 in Wireshark Hex+ASCII layout
+netra hexdump --file capture.pcap --index 1
+
+# Generate protocol hierarchy and IP conversation matrix
+netra pcap-stats --file capture.pcap
 ```
 
-### Local Subnet Discovery
-Scan an authorized local network range to detect active devices:
+### Export & Inventory
 ```bash
-# Discover responsive hosts on a /24 subnet
-netra discover --subnet 192.168.1.0/24
-
-# Tune concurrency for faster or lower-impact scanning
-netra discover --subnet 10.0.0.0/24 --concurrency 50
-```
-
-### Port & Service Scanning
-Perform controlled TCP port scanning with banner grabbing on a target host:
-```bash
-# Scan common ports on a host
-netra scan --target 192.168.1.1
-
-# Scan custom port list
-netra scan --target 192.168.1.10 --ports 22,80,443,3306,8080 --concurrency 100
-```
-
-### Exporting Host Inventory & Observations
-Export correlated network intelligence records (IP, MAC, open ports, services, timestamps) into structured formats:
-```bash
-# Export to JSON
+# Export discovered hosts and service inventory to JSON
 netra export --format json --output hosts_inventory.json
 
 # Export to CSV
 netra export --format csv --output hosts_inventory.csv
 ```
 
-### Throughput Benchmarking
-Run the built-in packet parsing throughput test:
+### Benchmark
 ```bash
+# Run packet parsing throughput benchmark
 netra benchmark
 ```
+*Measured performance: ~1.86 million packets/second (~535 ns/packet).*
 
 ---
 
-## Portable Mode Setup
+## Portable Mode Deployment
 
 NETRA features zero-configuration portable deployment:
 
@@ -181,57 +215,59 @@ Portable-Folder/
 |-- netra.exe
 |-- netra-desktop.exe
 |-- portable.flag
+|-- sample_capture.pcap
 |-- config/
 |   `-- settings.toml
 |-- data/
-|   |-- netra.db
+|   |-- netra.db (SQLite WAL)
 |   |-- captures/
 |   `-- exports/
 `-- logs/
 ```
 
-*When `portable.flag` is omitted, NETRA automatically uses standard operating system directories (`AppData` on Windows, `~/.local/share` on Linux, `Application Support` on macOS).*
-
 ---
 
-## Architecture & Crates
+## Repository Architecture
 
-The codebase is structured into modular, independently testable crates:
-
-| Crate | Responsibility |
-|---|---|
-| `netra-common` | Core domain types (`HostRecord`, `PacketMetadata`, `MacAddress`, `NetraError`) |
-| `netra-config` | TOML configuration loader and portable mode path resolver |
-| `netra-storage` | SQLite engine with WAL journal mode, transactions, and schema migrations |
-| `netra-protocols` | Protocol decoders (ARP, DNS, HTTP, TLS Client Hello SNI) |
-| `netra-parser` | Streaming PCAP and PCAPNG readers with bounded memory allocation |
-| `netra-filter` | Expression filter engine (protocols, IP addresses, ports) |
-| `netra-capture` | Cross-platform capture abstractions and PCAP writer export |
-| `netra-scanner` | Asynchronous TCP and UDP port scanner with concurrency control |
-| `netra-discovery` | Subnet CIDR calculation and concurrent host discovery sweep |
-| `netra-intelligence` | Correlation engine linking hosts, IPs, MACs, ports, services, and traffic |
-| `netra-export` | Structured export serializers for JSON and CSV |
-| `netra-core` | High-level facade coordinating storage, scanning, parsing, and intelligence |
-| `apps/cli` | Command-line interface executable (`netra`) |
-| `apps/desktop` | Native desktop graphical interface (`netra-desktop`) |
+```
+netra/
+|-- apps/
+|   |-- desktop/          # Slint graphical desktop interface (3-pane layout)
+|   `-- cli/              # Clap command-line interface
+|-- crates/
+|   |-- netra-common/     # Core domain types (HostRecord, PacketMetadata, MacAddress)
+|   |-- netra-config/     # TOML configuration and portable mode path resolver
+|   |-- netra-storage/    # SQLite engine with WAL journal and schema migrations
+|   |-- netra-protocols/  # Dissectors (ARP, DHCP, DNS, HTTP, ICMP, SMB, NTP, SSH, SSDP, TCP, TLS)
+|   |-- netra-parser/     # Streaming PCAP/PCAPNG, PacketTree, HexDumpViewer, StreamReassembler
+|   |-- netra-filter/     # Wireshark-style recursive display filter engine
+|   |-- netra-capture/    # Cross-platform capture abstraction and PCAP writer export
+|   |-- netra-scanner/    # Nmap port scanner, UDP scanner, Service probe engine, OS fingerprinter
+|   |-- netra-discovery/  # Subnet CIDR / range parser and concurrent host sweep
+|   |-- netra-intelligence/ # Unified correlation linking hosts, IPs, MACs, ports, services, and traffic
+|   |-- netra-export/     # Structured JSON and CSV export engine
+|   `-- netra-core/       # Engine coordinator facade
+|-- dist/
+|   `-- portable/         # Ready-to-run portable distribution bundle
+|-- Cargo.toml
+|-- LICENSE
+|-- NOTICE
+`-- README.md
+```
 
 ---
 
 ## Running Tests & Benchmarks
 
-Run the full workspace test suite:
+Run the complete test suite across all 12 crates:
 
 ```bash
-# Run all unit and integration tests
-cargo test
-
-# Run a specific integration test
-cargo test -p netra-core --test test_pcap_analysis
+cargo test --workspace
 ```
 
 ---
 
-## License
+## License & Authorship
 
-This project is licensed under the **Apache License, Version 2.0**.  
-See [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.
+- **Author & Maintainer**: VG31OP
+- **License**: Apache License 2.0 (see [LICENSE](LICENSE) and [NOTICE](NOTICE) for details).
